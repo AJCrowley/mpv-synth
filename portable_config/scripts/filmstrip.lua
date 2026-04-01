@@ -445,9 +445,16 @@ end
 
 local function update_visibility()
     if not all_ready then return end
-    -- Geometry hasn't been recalculated yet; showing now would place the
-    -- composite at the stale bar_y. remap() calls us again when ready.
-    if resize_timer then return end
+    -- A resize debounce is pending. Rather than blocking visibility for up
+    -- to 500 ms (which causes the filmstrip to silently ignore hovers until
+    -- the timer happens to fire while the mouse is still in zone), accelerate
+    -- it: resolve geometry right now, remap, then re-enter update_visibility
+    -- with a correct bar_y. remap() is cheap — it just re-composites cached
+    -- thumbnails — so calling it here on demand is fine.
+    if resize_timer then
+        resize_timer:kill(); resize_timer = nil
+        remap(); return
+    end
 
     if force_state == "hide" then
         cancel_idle_timer()
@@ -499,9 +506,7 @@ local function on_all_ready()
     mp.msg.info("filmstrip: all thumbnails ready")
 
     -- Cancel any pending resize_timer — we will handle the geometry check
-    -- ourselves right now rather than waiting for it to fire. Without this,
-    -- update_visibility() returns early due to "if resize_timer then return end",
-    -- and the filmstrip never appears after the timer eventually calls remap.
+    -- ourselves right now rather than waiting for it to fire.
     if resize_timer then resize_timer:kill(); resize_timer = nil end
 
     -- Check whether geometry has changed since build() started. We resolve
