@@ -803,6 +803,75 @@ function Get-VSDLLs {
     }
 }
 
+function Upgrade-Scripts-And-Updater {
+    Write-Host "Checking for script updates..." -ForegroundColor Green
+
+    $zip_url = "https://github.com/AJCrowley/mpv-synth/releases/latest/download/mpv-synth.zip"
+    $temp_zip = Join-Path $env:TEMP "mpv-synth.zip"
+    $extract_dir = Join-Path $env:TEMP "mpv_synth_extract"
+
+    try {
+        # Download latest release
+        Write-Host "Downloading latest release..." -ForegroundColor Green
+        Invoke-WebRequest -Uri $zip_url -OutFile $temp_zip -UserAgent $useragent
+
+        # Clean + extract
+        if (Test-Path $extract_dir) {
+            Remove-Item $extract_dir -Recurse -Force
+        }
+        Expand-Archive -LiteralPath $temp_zip -DestinationPath $extract_dir -Force
+
+        # Root folder inside zip (GitHub zips always wrap)
+        $root = Get-ChildItem $extract_dir | Select-Object -First 1
+
+        # Paths
+        $src_scripts = Join-Path $root.FullName "portable_config\scripts"
+        $dst_scripts = Join-Path (Get-Location).Path "portable_config\scripts"
+
+        $src_updater = Join-Path $root.FullName "installer\updater.ps1"
+        $dst_updater = $MyInvocation.MyCommand.Path
+
+        # --- Update scripts (merge, don’t delete extras) ---
+        if (Test-Path $src_scripts) {
+            Write-Host "Updating scripts..." -ForegroundColor Green
+
+            if (-not (Test-Path $dst_scripts)) {
+                New-Item -ItemType Directory -Path $dst_scripts | Out-Null
+            }
+
+            Copy-Item "$src_scripts\*" $dst_scripts -Recurse -Force
+            Write-Host "Scripts updated (custom files preserved)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "No scripts folder found in update." -ForegroundColor Yellow
+        }
+
+        # --- Self-update ---
+        if (Test-Path $src_updater) {
+            Write-Host "Updating updater.ps1..." -ForegroundColor Green
+
+            # Copy to temp first to avoid overwrite issues while running
+            $temp_self = "$dst_updater.new"
+            Copy-Item $src_updater $temp_self -Force
+
+            # Replace after script ends (safe approach)
+            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Start-Sleep 1; Move-Item -Force '$temp_self' '$dst_updater'`"" -WindowStyle Hidden
+
+            Write-Host "Updater will self-update after exit." -ForegroundColor Green
+        }
+        else {
+            Write-Host "No updater.ps1 found in update." -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Script update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    finally {
+        if (Test-Path $temp_zip) { Remove-Item $temp_zip -Force }
+        if (Test-Path $extract_dir) { Remove-Item $extract_dir -Recurse -Force }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -825,6 +894,7 @@ try {
 		& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
 	}
     Upgrade-Mpv
+	Upgrade-Scripts-And-Updater
     Get-VapourSynth
     Get-VSDLLs
     Upgrade-Ytplugin
