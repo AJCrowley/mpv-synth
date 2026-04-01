@@ -1,5 +1,11 @@
 # mpv-synth
-### A media player for Windows built for the way people actually watch things
+### An mpv-based media player for Windows built for the way people actually watch things
+
+**Tired of broken mpv setups, outdated players, and endless config tweaking?**
+
+mpv-synth gives you a fully working, self-updating mpv-based media player with modern features — out of the box.
+
+No setup headaches. No maintenance. Just press play.
 
 ![mpv-synth](screenshot.png)
 
@@ -12,6 +18,61 @@ Windows has never had a truly great built-in media player, and the third-party e
 Contrast that with how media playback works on your phone. You open a file — it plays. When it's done, it's done. It remembers your position. It just gets out of the way. There's no application to wrangle. It feels like a feature of the operating system rather than a third-party tool bolted on top of it.
 
 That's the experience mpv-synth is built to deliver on Windows.
+
+---
+
+## What mpv-synth is
+
+**mpv-synth turns video playback into a native OS-level experience.**
+
+Open a file → it plays → it closes when done.
+
+No UI clutter. No library management. No friction.
+
+---
+
+## What you get
+
+- Works instantly — no manual setup
+- Automatically updates mpv, scripts, and tools
+- Seamless episode playback (auto-next)
+- Remembers where you left off
+- Advanced video features (HDR, interpolation) — optional
+- Filmstrip timeline with previews
+- Stream videos directly from your browser
+
+---
+
+## Zero maintenance
+
+mpv-synth keeps itself up to date.
+
+Press `U` at any time and it updates:
+- mpv
+- ffmpeg
+- yt-dlp
+- scripts and plugins
+
+No manual downloads. No version mismatches. No breakage.
+
+---
+
+## Who this is for
+
+- You use mpv but hate maintaining it
+- You want a clean, minimal playback experience
+- You watch series and want seamless episode playback
+- You want advanced features without manual setup
+
+---
+
+## Quick Start (30 seconds)
+
+1. Download and extract the latest release into your Program Files
+2. Run `INSTALL.BAT`
+3. Double-click any video
+
+Done.
 
 ---
 
@@ -31,7 +92,7 @@ That's the experience mpv-synth is built to deliver on Windows.
 
 **It streams from the web.** mpv-synth includes browser extensions for Chrome-family browsers and Firefox that add a "Play in mpv-synth" option to your right-click menu on any link to a page with video or currently open page with a video. One click routes the stream through the player, bypassing browser-based playback entirely.
 
-**It updates itself.** Press `U` from within the player (or run `updater.bat`) and mpv-synth will pull the latest versions of mpv, ffmpeg, yt-dlp, and associated tools. Keeping everything current is a single keypress.
+**It updates itself.** Press `U` from within the player (or run `updater.bat`) and mpv-synth will pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and associated tools. Keeping everything current is a single keypress.
 
 ---
 
@@ -69,7 +130,7 @@ That's it. The `INSTALL.BAT` script deletes itself after a successful run. Every
 
 ### Browser extensions
 
-The browser extensions are entirely optional — mpv-synth works perfectly as a local media player without them.
+The browser extensions are entirely optional — mpv-synth works perfectly as a local mpv-based media player without them.
 
 To install:
 
