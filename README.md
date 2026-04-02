@@ -1,6 +1,8 @@
 # mpv-synth
 ### An mpv-based media player for Windows built for the way people actually watch things
 
+Official website: https://mpvsynth.app
+
 **Tired of broken mpv setups, outdated players, and endless config tweaking?**
 
 mpv-synth gives you a fully working, self-updating mpv-based media player with modern features — out of the box.
