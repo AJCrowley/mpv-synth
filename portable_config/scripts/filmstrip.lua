@@ -657,7 +657,7 @@ end
 -- Resize: remap
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local function remap()
+remap = function()
     local ok, reason = resolve_geometry()
     if not ok then
         mp.msg.info("filmstrip: remap skipped — " .. (reason or "?"))
