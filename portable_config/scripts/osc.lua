@@ -2187,7 +2187,7 @@ local function osc_init()
 
     -- load window controls
     if window_controls_enabled() then
-        window_controls(user_opts.layout == "topbar")
+        --window_controls(user_opts.layout == "topbar")
     end
 
     --do something with the elements
