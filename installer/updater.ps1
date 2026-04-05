@@ -642,16 +642,16 @@ function Get-VapourSynth {
     Write-Host "VapourSynth not found -- installing." -ForegroundColor Green
 
     # Fetch latest stable release version from GitHub
-    $releases = Invoke-WebRequest -Uri "https://api.github.com/repos/vapoursynth/vapoursynth/releases" `
-                    -UseBasicParsing -UserAgent $useragent | ConvertFrom-Json
-    $ver = $null
-    foreach ($r in $releases) {
-        if (-not $r.prerelease) { $ver = $r.name.TrimStart("R"); break }
-    }
-    if (-not $ver) {
-        Write-Host "Could not determine latest VapourSynth version -- skipping." -ForegroundColor Red
-        return
-    }
+    #$releases = Invoke-WebRequest -Uri "https://api.github.com/repos/vapoursynth/vapoursynth/releases" `
+    #                -UseBasicParsing -UserAgent $useragent | ConvertFrom-Json
+    $ver = 73
+    #foreach ($r in $releases) {
+    #    if (-not $r.prerelease) { $ver = $r.name.TrimStart("R"); break }
+    #}
+    #if (-not $ver) {
+    #    Write-Host "Could not determine latest VapourSynth version -- skipping." -ForegroundColor Red
+    #    return
+    #}
     Write-Host "Latest VapourSynth: R$ver" -ForegroundColor Green
 
     # Determine latest Python 3.14 embed patch version
