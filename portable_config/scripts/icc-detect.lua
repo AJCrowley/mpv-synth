@@ -97,20 +97,20 @@ local function detect_content(filename)
         args = {
             ffprobe_path,
             "-v", "error",
-            "-select_streams", "v:0",
+            "-select_streams", "v",
             "-show_entries",
-            "stream=color_transfer,color_primaries:stream_side_data=type",
+            "stream=color_space,color_primaries,color_transfer",
             "-of", "json",
             filename,
         },
         capture_stdout = true,
     })
 
-    if result.status ~= 0 or not result.stdout then return "sdr" end
+    if result.status ~= 0 or not result.stdout then return false end
 
     local data = utils.parse_json(result.stdout)
     if not data or not data.streams or #data.streams == 0 then
-        return "sdr"
+        return false
     end
 
     local s = data.streams[1]
@@ -159,9 +159,10 @@ local function on_file_loaded()
 
     current_profile = nil -- reset
     content_type = detect_content(filename)
-
-    -- Delay once for VO init
-    mp.add_timeout(0.2, update_output)
+    if content_type then
+        -- Delay once for VO init
+        mp.add_timeout(0.2, update_output)
+    end
 end
 
 -- ---------------------------------------------------------------------------
