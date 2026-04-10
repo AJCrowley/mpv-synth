@@ -149,9 +149,9 @@ local last_x, last_y
 
 local last_seek_time
 local last_thumb_time  -- wall-clock time of last successful thumbnail
-local last_seek_req_time  -- wall-clock time of last seek request
 local stall_watchdog  -- timer handle
 local stall_timeout = 4  -- seconds without a new thumb before respawn
+local re_seek_needed = false  -- true after first thumbnail, until verification seek confirmed
 
 local effective_w, effective_h = options.max_width, options.max_height
 local real_w, real_h
@@ -632,13 +632,12 @@ seek_timer = mp.add_periodic_timer(seek_period, function()
     if seek_period_counter == 0 then
         seek(allow_fast_seek)
         seek_period_counter = 1
+    elseif seek_period_counter < 3 then
+        seek_period_counter = seek_period_counter + 1
     else
-        if seek_period_counter == 2 then
-            if allow_fast_seek then
-                seek_timer:kill()
-                seek()
-            end
-        else seek_period_counter = seek_period_counter + 1 end
+        -- Keep sending precise seeks until file_timer kills us upon receipt of a thumbnail.
+        -- This prevents the subprocess from going quiet on a stale or slow render.
+        seek(false)
     end
 end)
 seek_timer:kill()
@@ -647,27 +646,24 @@ local function start_stall_watchdog()
     if stall_watchdog then stall_watchdog:kill() end
     stall_watchdog = mp.add_timeout(stall_timeout, function()
         stall_watchdog = nil
-        if not spawned then return end
-        -- Still waiting for a thumbnail after stall_timeout seconds.
-        -- The subprocess may have silently died or hung. Respawn it.
-        local t = last_thumb_time or 0
-        local r = last_seek_req_time or 0
-        if r > t and (mp.get_time() - r) >= stall_timeout - 0.1 then
-            mp.msg.warn("thumbfast: stall detected — respawning subprocess")
-            local seek_time = last_seek_time
-            run("quit")
-            clear()
-            spawned = false
-            if seek_time then
-                spawn(seek_time)
-                file_timer:resume()
-            end
+        -- Only act if we are actively showing thumbnails and subprocess is alive.
+        -- The watchdog is killed by file_timer as soon as verification succeeds,
+        -- so if it fires here the subprocess truly failed to respond.
+        if not spawned or not show_thumbnail then return end
+        mp.msg.warn("thumbfast: stall detected — respawning subprocess")
+        local seek_time = last_seek_time
+        run("quit")
+        clear()
+        spawned = false
+        if seek_time then
+            spawn(seek_time)
+            file_timer:resume()
         end
     end)
 end
 
 local function request_seek()
-    last_seek_req_time = mp.get_time()  -- watchdog: seek requested
+    re_seek_needed = false  -- a new seek supersedes any pending verification
     start_stall_watchdog()
     if seek_timer:is_enabled() then
         seek_period_counter = 0
@@ -679,25 +675,24 @@ local function request_seek()
 end
 
 local function check_new_thumb()
-    -- the slave might start writing to the file after checking existance and
+    -- The slave might start writing to the file after checking existance and
     -- validity but before actually moving the file, so move to a temporary
     -- location before validity check to make sure everything stays consistant
     -- and valid thumbnails don't get overwritten by invalid ones
-    local tmp = options.thumbnail..".tmp"
-    move_file(options.thumbnail, tmp)
-    local finfo = mp.utils.file_info(tmp)
+    local finfo = mp.utils.file_info(options.thumbnail)
     if not finfo then return false end
     spawn_waiting = false
     if finfo.size and finfo.size > 0 then
         local w = effective_w
         local h = effective_h
-        local expected_min = effective_w * effective_h -- very loose check
-        if finfo.size < expected_min then
-            msg.warn("Thumbnail too small, skipping (likely incomplete frame)")
-            return
+        local expected_bytes = effective_w * effective_h * 4
+        if finfo.size < expected_bytes then
+            mp.msg.warn("Thumbnail is too small, skipping")
+            os.remove(options.thumbnail)  -- remove partial file to avoid repeated hits
+            return false
         end
         if w then -- only accept valid thumbnails
-            move_file(tmp, options.thumbnail..".bgra")
+            move_file(options.thumbnail, options.thumbnail..".bgra")
 
             real_w, real_h = w, h
             last_thumb_time = mp.get_time()  -- watchdog: thumbnail arrived
@@ -716,7 +711,26 @@ end
 
 file_timer = mp.add_periodic_timer(file_check_period, function()
     if check_new_thumb() then
+        -- Stop seeking now that a thumbnail has arrived.
+        seek_timer:kill()
         draw(real_w, real_h, script_name)
+
+        if show_thumbnail and spawned and last_seek_time then
+            if re_seek_needed then
+                -- Phase 2: verification thumbnail arrived — position confirmed.
+                re_seek_needed = false
+                if stall_watchdog then stall_watchdog:kill(); stall_watchdog = nil end
+            else
+                -- Phase 1: first thumbnail may be stale (rendered for an older seek).
+                -- Issue one precise verification seek to the current target position.
+                -- If the subprocess was already there, it renders again quickly and we
+                -- confirm. If it was off, we get the correct frame. Either way the
+                -- watchdog covers subprocess death during this window.
+                re_seek_needed = true
+                start_stall_watchdog()
+                run("async seek " .. last_seek_time .. " absolute+exact")
+            end
+        end
     end
 end)
 file_timer:kill()
@@ -731,6 +745,7 @@ local function clear()
         activity_timer:resume()
     end
     last_seek_time = nil
+    re_seek_needed = false
     if stall_watchdog then stall_watchdog:kill(); stall_watchdog = nil end
     show_thumbnail = false
     last_x = nil
@@ -786,9 +801,11 @@ local function thumb(time, r_x, r_y, script)
 
     if time == last_seek_time then return end
     last_seek_time = time
+
     if not spawned then spawn(time) end
-    request_seek()
+
     if not file_timer:is_enabled() then file_timer:resume() end
+    request_seek()
 end
 
 local function watch_changes()

@@ -122,7 +122,9 @@ Done.
 
 2. Run `INSTALL.BAT`. This single script handles everything: it downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, VapourSynth, and the required interfacing libraries; registers file associations; creates Start Menu and AutoPlay entries; and then removes itself. **The install is interactive** — read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your computer is more than roughly a decade old, choose option 2 (`x86_64`) at the first prompt rather than the default option 1 (`x86_64-v3`). Any modern machine should handle `x86_64-v3` without issue.
 
-3. After installation, double-click any video file. If Windows asks which app to use, select mpv-synth and tick "Always" — you shouldn't need to do this more than once per file type.
+3. The system is set for English by default. If this is not your first language, edit the `portable_config\mpv.conf` file and set your language codes in the `alang` parameter for audio, and `slang` for subtitles. If you want subtitles to be on by default, you can either set `sid=yes` in mpv.conf, or if you want more advanced pattern matching, go into `script-opts\auto-sub.conf` and add your terms to the `match` parameter. A subtitle track will only be automatically activated if it matches every item in this comma separated list (no spaces), so the default `match=en,forced` will select the first subtitle track that matches both of those, usually being something along the lines of `English (Forced)`. You can have only a single value if you just want it to select your value, or build a complex filter that only turns on very specific subtitles. If you just want mpv to select your subtitles set `enabled=no` in `auto-subs.conf`.
+
+4. After installation, double-click any video file. If Windows asks which app to use, select mpv-synth and tick "Always" — you shouldn't need to do this more than once per file type.
 
 That's it. The `INSTALL.BAT` script deletes itself after a successful run. Everything from that point forward is handled by the built-in updater.
 

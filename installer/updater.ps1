@@ -1,5 +1,6 @@
 param(
-    [switch]$Unattended
+    [switch]$Unattended,
+	[switch]$Installing
 )
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
@@ -827,7 +828,8 @@ function Upgrade-Scripts-And-Updater {
         # Paths
         $src_scripts = Join-Path $root.FullName "portable_config\scripts"
         $dst_scripts = Join-Path (Get-Location).Path "portable_config\scripts"
-
+        $src_script_opts = Join-Path $root.FullName "portable_config\script-opts"
+        $dst_scripts_opts = Join-Path (Get-Location).Path "portable_config\script-opts"
         $src_updater = Join-Path $root.FullName "installer\updater.ps1"
         $dst_updater = $MyInvocation.MyCommand.Path
 
@@ -844,6 +846,24 @@ function Upgrade-Scripts-And-Updater {
         }
         else {
             Write-Host "No scripts folder found in update." -ForegroundColor Yellow
+        }
+		
+		# --- Update script-opts (merge, don’t delete extras) ---
+        if (Test-Path $src_script_opts) {
+            Write-Host "Updating script options..." -ForegroundColor Green
+
+            if (-not (Test-Path $dst_script_opts)) {
+                New-Item -ItemType Directory -Path $dst_script_opts | Out-Null
+            }
+
+            # --- Extract any new options, don't overwrite existing ones
+			Get-ChildItem "$src_script_opts\*" -Recurse | 
+				Where-Object { -not (Test-Path (Join-Path $dst_script_opts ($_.FullName.Substring($src_script_opts.Length)))) } |
+				Copy-Item -Destination $dst_script_opts
+            Write-Host "Script options updated (custom files preserved)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "No script options folder found in update." -ForegroundColor Yellow
         }
 
         # --- Self-update ---
@@ -894,7 +914,9 @@ try {
 		& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
 	}
     Upgrade-Mpv
-	Upgrade-Scripts-And-Updater
+	if (-not $Installing) {
+		Upgrade-Scripts-And-Updater
+	}
     Get-VapourSynth
     Get-VSDLLs
     Upgrade-Ytplugin

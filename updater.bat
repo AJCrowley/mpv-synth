@@ -7,6 +7,7 @@
 :: -----------------------------------------------------------------------
 set unattended=no
 if "%1"=="/u" set unattended=yes
+if "%2"=="/i" set install=yes
 pushd %~dp0
 
 :: -----------------------------------------------------------------------
@@ -32,14 +33,16 @@ if exist "%~dp0installer\updater.ps1" (
 
 set "unattended_flag="
 if [%unattended%] == [yes] set "unattended_flag= -Unattended"
+set "installing_flag="
+if [%install%] == [yes] set "install_flag= -Installing"
 :: -----------------------------------------------------------------------
 :: Run the script -- prefer pwsh (PS 7+), fall back to Windows PowerShell 5
 :: -----------------------------------------------------------------------
 where pwsh >nul 2>nul
 if %errorlevel% equ 0 (
-    pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File %updater_script%%unattended_flag%
+    pwsh -NoProfile -NoLogo -ExecutionPolicy Bypass -File %updater_script%%unattended_flag%%install_flag%
 ) else (
-    powershell -NoProfile -NoLogo -ExecutionPolicy Bypass -File %updater_script%%unattended_flag%
+    powershell -NoProfile -NoLogo -ExecutionPolicy Bypass -File %updater_script%%unattended_flag%%install_flag%
 )
 
 :: -----------------------------------------------------------------------

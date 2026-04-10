@@ -15,10 +15,10 @@ if %errorlevel% neq 0 (
 )
 
 :: Run updater (downloads mpv, VapourSynth, SVPflow, ffmpeg, yt-dlp)
-call "%~dp0updater.bat" /u
+call "%~dp0updater.bat" /u /i
 
 :: Install (sets PATH, ACLs, etc.)
-call "%~dp0installer\mpv-install.bat" /u
+call "%~dp0installer\mpv-install.bat" /u /i
 
 :: Pause until everything done for safe self-deletion
 echo mpv-synth install complete
