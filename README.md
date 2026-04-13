@@ -92,6 +92,8 @@ Done.
 
 **It has a filmstrip timeline.** The seekbar is populated with 150 evenly-spaced thumbnail slices of the video, giving you an at-a-glance map of the entire file. Hover over any point and a frame-accurate preview thumbnail appears. Jump directly to any scene with a single click.
 
+**It has smart subtitle detection.** Subtitle auto selection as broad or as narrow as you prefer. Have it always select the subtitle track of your native tongue, or refine the criteria so that subtitles are only loaded in multi-lingual videos (indicated by "Forced" subtitle track).
+
 **It streams from the web.** mpv-synth includes browser extensions for Chrome-family browsers and Firefox that add a "Play in mpv-synth" option to your right-click menu on any link to a page with video or currently open page with a video. One click routes the stream through the player, bypassing browser-based playback entirely.
 
 **It updates itself.** Press `U` from within the player (or run `updater.bat`) and mpv-synth will pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and associated tools. Keeping everything current is a single keypress.
@@ -122,7 +124,7 @@ Done.
 
 2. Run `INSTALL.BAT`. This single script handles everything: it downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, VapourSynth, and the required interfacing libraries; registers file associations; creates Start Menu and AutoPlay entries; and then removes itself. **The install is interactive** — read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your computer is more than roughly a decade old, choose option 2 (`x86_64`) at the first prompt rather than the default option 1 (`x86_64-v3`). Any modern machine should handle `x86_64-v3` without issue.
 
-3. The system is set for English by default. If this is not your first language, edit the `portable_config\mpv.conf` file and set your language codes in the `alang` parameter for audio, and `slang` for subtitles. If you want subtitles to be on by default, you can either set `sid=yes` in mpv.conf, or if you want more advanced pattern matching, go into `script-opts\auto-sub.conf` and add your terms to the `match` parameter. A subtitle track will only be automatically activated if it matches every item in this comma separated list (no spaces), so the default `match=en,forced` will select the first subtitle track that matches both of those, usually being something along the lines of `English (Forced)`. You can have only a single value if you just want it to select your value, or build a complex filter that only turns on very specific subtitles. If you just want mpv to select your subtitles set `enabled=no` in `auto-subs.conf`.
+3. The system is set for English by default. If this is not your first language, edit the `portable_config\mpv.conf` file and set your language codes in the `alang` parameter for audio, and `slang` for subtitles. If you want subtitles to be on by default, you can either set `sid=yes` in mpv.conf, or if you want more advanced pattern matching, go into `script-opts\auto-sub.conf` and add your terms to the `match` parameter. A subtitle track will only be automatically activated if it matches every item in this comma separated list (no spaces), so the default `match=en,forced` will select the first subtitle track that matches both of those (could be "English (Forced)" or "Forced French", as both "en" and "forced" are matched to those strings), usually being something along the lines of `English (Forced)`. This increased granularity is useful if you don't normally use subtitles, but want them to activate automatically in certain scenarios (such as multi-lingual video). You can have only a single value if you just want it to select your value, or build a complex filter that only turns on very specific subtitles. If you just want mpv to select your subtitles without the use of this plugin, set `enabled=no` in `script-opts\auto-subs.conf`.
 
 4. After installation, double-click any video file. If Windows asks which app to use, select mpv-synth and tick "Always" — you shouldn't need to do this more than once per file type.
 
@@ -237,6 +239,7 @@ Plugins written for this project:
 - **vapoursynth.lua + vapoursynth.vpy** — VapourSynth integration layer; fps preset menu.
 - **filmstrip.lua** — Filmstrip timeline overlay; composite rendering; resize/fullscreen handling.
 - **icc-detect.lua** — Per-file colour space and HDR detection; automatic player configuration.
+- **auto-subs.lua** — Smarter subtitle track selection. Select a subtitle track under circumstances as specific or as broad as you like. Most useful for auto-enabling `forced` subtitle tracks in multi-lingual video.
 
 ---
 
