@@ -220,6 +220,14 @@ If the filmstrip is impacting playback performance during generation, reducing `
 
 ---
 
+## Removing mpv-synth
+
+If you've tried it out and decided that this isn't the media player for you, that's fine, and I thank you for giving it a shot. If you're encountering a specific issue I'd ask that regardless of whether you uninstall or keep mpv-synth that you make a post on the "Issues" page of the Github project, describing your issue in as much detail as possible, so that I can work on addressing it and continually improving the player.
+
+To uninstall, simply run the ```installer\mpv-uninstall.bat``` script. Now all files and registry entries created in the installation of mpv-synth are removed, and you can safely delete all of the files. If you accidentally deleted all of the files without running the uninstall script and are experiencing remnants of the installation, don't worry, you don't need to re-download the whole program, you can just grab the ```mpv-uninstall.bat``` script from the project's Github page and run it in isolation, it doesn't depend on any of the other files in the package, so it will clean up and remnants of your install.
+
+---
+
 ## Acknowledgements
 
 mpv-synth is built on the work of a lot of talented people. Several of the bundled components are used in modified form — patched for reliability, compatibility with this specific setup, or to resolve issues that appeared during testing.
