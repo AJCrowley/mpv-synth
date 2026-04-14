@@ -614,6 +614,17 @@ local function run(command)
     end
 end
 
+local function force_respawn()
+    if not respawning and spawned then
+        respawning = true
+        run("quit")
+        clear()
+        spawned = false
+        spawn(last_seek_time or mp.get_property_number("time-pos", 0))
+        file_timer:resume()
+    end
+end
+
 local function draw(w, h, script)
     if not w or not show_thumbnail then return end
     if x ~= nil then
@@ -635,12 +646,7 @@ local function draw(w, h, script)
                         if not file_timer:is_enabled() then file_timer:resume() end
                         if last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
                             mp.msg.warn("overlay failure + stale thumb → respawn")
-                            respawning = true
-                            run("quit")
-                            clear()
-                            spawned = false
-                            spawn(last_seek_time)
-                            file_timer:resume()
+                            force_respawn()
                         else
                             request_seek()
                         end
@@ -697,23 +703,15 @@ seek_timer:kill()
 
 local function start_stall_watchdog()
     if stall_watchdog then stall_watchdog:kill() end
+    stall_watchdog = nil
     stall_watchdog = mp.add_timeout(stall_timeout, function()
-        stall_watchdog = nil
         -- Only act if we are actively showing thumbnails and subprocess is alive.
         -- The watchdog is killed by file_timer as soon as verification succeeds,
         -- so if it fires here the subprocess truly failed to respond.
         if not spawned or not show_thumbnail then return end
-        if not respawning then
-            respawning = true
+        if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
             mp.msg.warn("stall detected → respawning subprocess")
-            local seek_time = last_seek_time
-            run("quit")
-            clear()
-            spawned = false
-            if seek_time then
-                spawn(seek_time or mp.get_property_number("time-pos", 0))
-                file_timer:resume()
-            end
+            force_respawn()
         end
     end)
 end
@@ -782,6 +780,11 @@ file_timer = mp.add_periodic_timer(file_check_period, function()
                 -- If the subprocess was already there, it renders again quickly and we
                 -- confirm. If it was off, we get the correct frame. Either way the
                 -- watchdog covers subprocess death during this window.
+                -- first check for existing timeout
+                if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
+                    mp.msg.warn("stall detected → respawning subprocess")
+                    force_respawn()
+                end
                 re_seek_needed = true
                 start_stall_watchdog()
                 run("async seek " .. last_seek_time .. " absolute+exact")
@@ -863,12 +866,7 @@ local function thumb(time, r_x, r_y, script)
     if last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
         if not respawning then
             mp.msg.warn("overlay failure + stale thumb → respawn")
-            respawning = true
-            run("quit")
-            clear()
-            spawned = false
-            spawn(last_seek_time)
-            file_timer:resume()
+            force_respawn()
         end
     else
         last_thumb_time = nil
@@ -906,11 +904,8 @@ local function watch_changes()
         if resized then
             -- mpv doesn't allow us to change output size
             local seek_time = last_seek_time
-            run("quit")
-            clear()
-            spawned = false
-            spawn(seek_time or mp.get_property_number("time-pos", 0))
-            file_timer:resume()
+            mp.msg.warn("video parameters changed, resizing → respawning subprocess")
+            force_respawn()
         else
             if rotate ~= last_rotate then
                 run("set video-rotate "..rotate)
