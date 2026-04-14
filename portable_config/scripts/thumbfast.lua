@@ -747,7 +747,7 @@ local function check_new_thumb()
         end
         if w then -- only accept valid thumbnails
             move_file(options.thumbnail)
-
+            last_thumb_time = mp.get_time()
             real_w, real_h = w, h
             if real_w and (real_w ~= last_real_w or real_h ~= last_real_h) then
                 last_real_w, last_real_h = real_w, real_h
@@ -829,7 +829,11 @@ activity_timer:kill()
 
 local function thumb(time, r_x, r_y, script)
     if disabled then return end
-    last_thumb_time = mp.get_time()
+    if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
+        mp.msg.warn("stall detected → respawning subprocess")
+        force_respawn()
+        return
+    end
     time = tonumber(time)
     if time == nil then return end
 
@@ -858,7 +862,6 @@ local function thumb(time, r_x, r_y, script)
     if not spawned then spawn(time) end
 
     if not file_timer:is_enabled() then file_timer:resume() end
-    last_thumb_time = nil
     respawning = false
     request_seek()
 end
