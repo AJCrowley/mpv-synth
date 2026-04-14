@@ -45,7 +45,7 @@ local options = {
     -- easy kill switch to disable script from config file
     enabled      = true,
     -- ── Thumbnail count ────────────────────────────────────────────────────
-    thumbnail_count = 150,
+    thumbnail_count = 125,
 
     -- ── Thumbnail height ───────────────────────────────────────────────────
     --   Controls how tall the filmstrip is, as a percentage of the uosc
