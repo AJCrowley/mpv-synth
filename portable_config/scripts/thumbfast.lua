@@ -453,7 +453,7 @@ local activity_timer
 
 function spawn(time)
     if disabled then return end
-
+    last_thumb_time = mp.get_time()
     local path = properties["path"]
     if path == nil then return end
 
@@ -616,6 +616,7 @@ end
 
 local function force_respawn()
     if not respawning and spawned then
+        mp.msg.warn("forcing subprocess respawn")
         respawning = true
         run("quit")
         clear()
@@ -634,6 +635,10 @@ local function draw(w, h, script)
             mp.msg.warn("expected thumbnail file not found")
             return
         end
+        if last_thumb_time and not respawning and mp.get_time() - last_thumb_time > stall_timeout then
+            mp.msg.warn("stale thumbnail → respawning subprocess")
+            force_respawn()
+        end
         if pre_0_30_0 then
             mp.command_native({"overlay-add", options.overlay_id, x, y, path, 0, "bgra", w, h, (4*w), scale_w, scale_h})
         else
@@ -644,12 +649,7 @@ local function draw(w, h, script)
                     if not respawning then
                         mp.msg.warn("overlay-add failed → re-seeking")
                         if not file_timer:is_enabled() then file_timer:resume() end
-                        if last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
-                            mp.msg.warn("overlay failure + stale thumb → respawn")
-                            force_respawn()
-                        else
-                            request_seek()
-                        end
+                        request_seek()
                     end
                 else
                     respawning = false
@@ -780,11 +780,6 @@ file_timer = mp.add_periodic_timer(file_check_period, function()
                 -- If the subprocess was already there, it renders again quickly and we
                 -- confirm. If it was off, we get the correct frame. Either way the
                 -- watchdog covers subprocess death during this window.
-                -- first check for existing timeout
-                if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
-                    mp.msg.warn("stall detected → respawning subprocess")
-                    force_respawn()
-                end
                 re_seek_needed = true
                 start_stall_watchdog()
                 run("async seek " .. last_seek_time .. " absolute+exact")
@@ -863,16 +858,9 @@ local function thumb(time, r_x, r_y, script)
     if not spawned then spawn(time) end
 
     if not file_timer:is_enabled() then file_timer:resume() end
-    if last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
-        if not respawning then
-            mp.msg.warn("overlay failure + stale thumb → respawn")
-            force_respawn()
-        end
-    else
-        last_thumb_time = nil
-        respawning = false
-        request_seek()
-    end
+    last_thumb_time = nil
+    respawning = false
+    request_seek()
 end
 
 local function watch_changes()
@@ -904,7 +892,7 @@ local function watch_changes()
         if resized then
             -- mpv doesn't allow us to change output size
             local seek_time = last_seek_time
-            mp.msg.warn("video parameters changed, resizing → respawning subprocess")
+            mp.msg.warn("video parameters changed, resizing requires subprocess respawn")
             force_respawn()
         else
             if rotate ~= last_rotate then
