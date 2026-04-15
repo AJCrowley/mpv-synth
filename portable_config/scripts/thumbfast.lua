@@ -62,9 +62,9 @@ local properties = {}
 local pre_0_30_0 = mp.command_native_async == nil
 local pre_0_33_0 = true
 local support_media_control = mp.get_property_native("media-controls") ~= nil
-local clear
+
 local request_seek
-local spawn
+local check_new_thumb
 
 function subprocess(args, async, callback)
     callback = callback or function() end
@@ -153,8 +153,7 @@ local last_x, last_y
 local last_seek_time
 local last_thumb_time  -- wall-clock time of last successful thumbnail
 local stall_watchdog  -- timer handle
-local stall_timeout = 1.5  -- seconds without a new thumb before respawn
-local respawning = false
+local stall_timeout = 4  -- seconds without a new thumb before respawn
 local re_seek_needed = false  -- true after first thumbnail, until verification seek confirmed
 
 -- Two alternating .bgra slots so the active file is never deleted while overlay-add is reading it.
@@ -191,7 +190,7 @@ local last_has_vid = 0
 local has_vid = 0
 
 local file_timer
-local file_check_period = 1/60
+local file_check_period = 1/120
 
 local allow_fast_seek = true
 
@@ -451,9 +450,9 @@ end
 
 local activity_timer
 
-function spawn(time)
+local function spawn(time)
     if disabled then return end
-    last_thumb_time = mp.get_time()
+
     local path = properties["path"]
     if path == nil then return end
 
@@ -474,10 +473,6 @@ function spawn(time)
 
     local vid = properties["vid"]
     has_vid = vid or 0
-
-    if not time then
-        time = mp.get_property_number("time-pos", 0)
-    end
 
     local args = {
         mpv_path, "--no-config", "--msg-level=all=no", "--idle", "--pause", "--keep-open=always", "--really-quiet", "--no-terminal",
@@ -548,18 +543,18 @@ function spawn(time)
                                     force_disabled = true
                                     info(real_w or effective_w, real_h or effective_h)
                                 end
-                                mp.commandv("show-text", "ERROR! cannot create mpv subprocess", 5000)
+                                mp.commandv("show-text", "thumbfast: ERROR! cannot create mpv subprocess", 5000)
                                 mp.commandv("script-message-to", "implay", "show-message", "thumbfast initial setup", "Set mpv_path=PATH_TO_ImPlay in thumbfast config:\n" .. string.gsub(mp.command_native({"expand-path", "~~/script-opts/thumbfast.conf"}), "[/\\]", path_separator).."\nand restart ImPlay")
                             end
                         else
-                            mp.commandv("show-text", "ERROR! cannot create mpv subprocess", 5000)
+                            mp.commandv("show-text", "thumbfast: ERROR! cannot create mpv subprocess", 5000)
                             if os_name == "windows" and frontend_path == nil then
-                                mp.commandv("script-message-to", "mpvnet", "show-text", "ERROR! install standalone mpv, see README", 5000, 20)
-                                mp.commandv("script-message", "mpv.net", "show-text", "ERROR! install standalone mpv, see README", 5000, 20)
+                                mp.commandv("script-message-to", "mpvnet", "show-text", "thumbfast: ERROR! install standalone mpv, see README", 5000, 20)
+                                mp.commandv("script-message", "mpv.net", "show-text", "thumbfast: ERROR! install standalone mpv, see README", 5000, 20)
                             end
                         end
                     else
-                        mp.commandv("show-text", "ERROR! cannot create mpv subprocess", 5000)
+                        mp.commandv("show-text", "thumbfast: ERROR! cannot create mpv subprocess", 5000)
                         -- found ImPlay but not defined in config
                         mp.commandv("script-message-to", "implay", "show-message", "thumbfast", "Set mpv_path=PATH_TO_ImPlay in thumbfast config:\n" .. string.gsub(mp.command_native({"expand-path", "~~/script-opts/thumbfast.conf"}), "[/\\]", path_separator).."\nand restart ImPlay")
                     end
@@ -614,31 +609,11 @@ local function run(command)
     end
 end
 
-local function force_respawn()
-    if not respawning and spawned then
-        mp.msg.warn("forcing subprocess respawn")
-        respawning = true
-        run("quit")
-        clear()
-        spawned = false
-        spawn(last_seek_time or mp.get_property_number("time-pos", 0))
-        file_timer:resume()
-    end
-end
-
 local function draw(w, h, script)
     if not w or not show_thumbnail then return end
     if x ~= nil then
         local scale_w, scale_h = options.scale_factor ~= 1 and (w * options.scale_factor) or nil, options.scale_factor ~= 1 and (h * options.scale_factor) or nil
         local path = bgra_path()
-        if not mp.utils.file_info(path) then
-            mp.msg.warn("expected thumbnail file not found")
-            return
-        end
-        if last_thumb_time and not respawning and mp.get_time() - last_thumb_time > stall_timeout then
-            mp.msg.warn("stale thumbnail → respawning subprocess")
-            force_respawn()
-        end
         if pre_0_30_0 then
             mp.command_native({"overlay-add", options.overlay_id, x, y, path, 0, "bgra", w, h, (4*w), scale_w, scale_h})
         else
@@ -646,13 +621,9 @@ local function draw(w, h, script)
                 -- If overlay-add failed (e.g. file briefly missing) re-arm the pipeline
                 -- so the display self-heals rather than freezing on the last frame.
                 if not success and show_thumbnail and spawned and last_seek_time then
-                    if not respawning then
-                        mp.msg.warn("overlay-add failed → re-seeking")
-                        if not file_timer:is_enabled() then file_timer:resume() end
-                        request_seek()
-                    end
-                else
-                    respawning = false
+                    mp.msg.warn("thumbfast: overlay-add failed, re-seeking")
+                    if not file_timer:is_enabled() then file_timer:resume() end
+                    request_seek()
                 end
             end)
         end
@@ -670,15 +641,11 @@ local function move_file(from)
     if os_name == "windows" then
         os.remove(to)
     end
-    local ok = os.rename(from, to)
-    if not ok then
-        mp.msg.warn("rename failed (file likely locked)")
-        return false
-    end
+    os.rename(from, to)
     thumb_slot = next_slot
 end
 
-function seek(fast)
+local function seek(fast)
     if last_seek_time then
         run("async seek " .. last_seek_time .. (fast and " absolute+keyframes" or " absolute+exact"))
     end
@@ -703,15 +670,20 @@ seek_timer:kill()
 
 local function start_stall_watchdog()
     if stall_watchdog then stall_watchdog:kill() end
-    stall_watchdog = nil
     stall_watchdog = mp.add_timeout(stall_timeout, function()
+        stall_watchdog = nil
         -- Only act if we are actively showing thumbnails and subprocess is alive.
         -- The watchdog is killed by file_timer as soon as verification succeeds,
         -- so if it fires here the subprocess truly failed to respond.
         if not spawned or not show_thumbnail then return end
-        if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
-            mp.msg.warn("stall detected → respawning subprocess")
-            force_respawn()
+        mp.msg.warn("thumbfast: stall detected — respawning subprocess")
+        local seek_time = last_seek_time
+        run("quit")
+        clear()
+        spawned = false
+        if seek_time then
+            spawn(seek_time)
+            file_timer:resume()
         end
     end)
 end
@@ -728,8 +700,8 @@ function request_seek()
     end
 end
 
-local function check_new_thumb()
-    -- The slave might start writing to the file after checking existence and
+function check_new_thumb()
+    -- The slave might start writing to the file after checking existance and
     -- validity but before actually moving the file, so move to a temporary
     -- location before validity check to make sure everything stays consistant
     -- and valid thumbnails don't get overwritten by invalid ones
@@ -741,14 +713,14 @@ local function check_new_thumb()
         local h = effective_h
         local expected_bytes = effective_w * effective_h * 4
         if finfo.size < expected_bytes then
-            mp.msg.warn("Thumbnail too small, skipping")
             os.remove(options.thumbnail)  -- remove partial file to avoid repeated hits
             return false
         end
         if w then -- only accept valid thumbnails
             move_file(options.thumbnail)
-            last_thumb_time = mp.get_time()
+
             real_w, real_h = w, h
+            last_thumb_time = mp.get_time()  -- watchdog: thumbnail arrived
             if real_w and (real_w ~= last_real_w or real_h ~= last_real_h) then
                 last_real_w, last_real_h = real_w, real_h
                 info(real_w, real_h)
@@ -764,7 +736,6 @@ end
 
 file_timer = mp.add_periodic_timer(file_check_period, function()
     if check_new_thumb() then
-        respawning = false
         -- Stop seeking now that a thumbnail has arrived.
         seek_timer:kill()
         draw(real_w, real_h, script_name)
@@ -789,7 +760,7 @@ file_timer = mp.add_periodic_timer(file_check_period, function()
 end)
 file_timer:kill()
 
-function clear()
+local function clear()
     file_timer:kill()
     seek_timer:kill()
     if options.quit_after_inactivity > 0 then
@@ -829,11 +800,7 @@ activity_timer:kill()
 
 local function thumb(time, r_x, r_y, script)
     if disabled then return end
-    if not respawning and last_thumb_time and mp.get_time() - last_thumb_time > stall_timeout then
-        mp.msg.warn("stall detected → respawning subprocess")
-        force_respawn()
-        return
-    end
+
     time = tonumber(time)
     if time == nil then return end
 
@@ -854,6 +821,7 @@ local function thumb(time, r_x, r_y, script)
         if show_thumbnail or activity_timer:is_enabled() then
             activity_timer:kill()
         end
+        activity_timer:resume()
     end
 
     if time == last_seek_time then return end
@@ -862,7 +830,6 @@ local function thumb(time, r_x, r_y, script)
     if not spawned then spawn(time) end
 
     if not file_timer:is_enabled() then file_timer:resume() end
-    respawning = false
     request_seek()
 end
 
@@ -895,8 +862,11 @@ local function watch_changes()
         if resized then
             -- mpv doesn't allow us to change output size
             local seek_time = last_seek_time
-            mp.msg.warn("video parameters changed, resizing requires subprocess respawn")
-            force_respawn()
+            run("quit")
+            clear()
+            spawned = false
+            spawn(seek_time or mp.get_property_number("time-pos", 0))
+            file_timer:resume()
         else
             if rotate ~= last_rotate then
                 run("set video-rotate "..rotate)
