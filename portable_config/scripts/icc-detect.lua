@@ -60,7 +60,7 @@ local function display_is_hdr()
 end
 
 local function apply_profile(profile)
-    if profile == current_profile then return end
+    if profile == current_profile or not profile then return end
     current_profile = profile
 
     if profile == "hdr-pass" then
@@ -125,6 +125,10 @@ local function detect_content(filename)
         end
     end
 
+    if transfer == "bt709" then
+        return nil
+    end
+
     if transfer == "smpte2084" or transfer == "arib-std-b67" then
         return "hdr"
     end
@@ -162,6 +166,8 @@ local function on_file_loaded()
     if content_type then
         -- Delay once for VO init
         mp.add_timeout(0.2, update_output)
+    else
+        mp.set_property("icc-profile-auto", "no")
     end
 end
 
