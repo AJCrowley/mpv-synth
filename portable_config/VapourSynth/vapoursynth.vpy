@@ -89,7 +89,7 @@ else:
     def interpolate(clip):
         input_um = clip.resize.Point(format=vs.YUV420P10, dither_type="random")
         input_m  = input_um
-        input_m  = input_m.std.CropRel(4, 4, 0, 0)
+        input_m  = input_m.std.CropRel(0, 0, 0, 0)
         input_m8 = input_m.resize.Point(format=vs.YUV420P8)
 
         super   = core.svp1.Super(input_m8, super_params)

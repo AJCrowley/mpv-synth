@@ -57,7 +57,7 @@ local user_opts = {
     chapter_fmt = "Chapter: %s", -- chapter print format for seekbar-hover. "no" to disable
     unicodeminus = false,       -- whether to use the Unicode minus sign character
 
-    background_color = "#000000",     -- background color of the osc
+    background_color = "#111111",     -- background color of the osc
     timecode_color = "#FFFFFF",       -- color of the progress bar and time color
     title_color = "#FFFFFF",          -- color of the title
     time_pos_color = "#FFFFFF",       -- color of the timecode at hovered position
@@ -135,7 +135,7 @@ for i = 1, 99 do
     user_opts["custom_button_" .. i .. "_wheel_up_command"] = ""
 end
 
-local icon_font = "mpv-osd-symbols"
+local icon_font = "mpv-osd-symbols" --"mpv-synth Symbols"
 
 -- Running this in Lua 5.3+ or LuaJIT converts a hexadecimal Unicode code point
 -- to the decimal value of every byte for Lua 5.1 and 5.2 compatibility:
@@ -212,7 +212,7 @@ local function set_osc_styles()
         elementDown = "{\\1c&H" .. osc_color_convert(user_opts.held_element_color) .."}",
         timecodes = "{\\blur0\\bord0\\1c&H" .. osc_color_convert(user_opts.timecode_color) .. "\\3c&HFFFFFF\\fs20}",
         vidtitle = "{\\blur0\\bord0\\1c&H" .. osc_color_convert(user_opts.title_color) .. "\\3c&HFFFFFF\\fs16\\q2}",
-        box = "{\\rDefault\\blur0\\bord1\\1c&H" .. osc_color_convert(user_opts.background_color) .. "\\3c&HFFFFFF}",
+        box = "{\\rDefault\\blur0\\bord2\\1c&H" .. osc_color_convert(user_opts.background_color) .. "\\3c&HFFFFFF}",
 
         topButtonsBar = "{\\blur0\\bord0\\1c&H" .. osc_color_convert(user_opts.top_buttons_color) .. "\\3c&HFFFFFF\\fs18\\fn" .. icon_font .. "}",
         smallButtonsBar = "{\\blur0\\bord0\\1c&H" .. osc_color_convert(user_opts.buttons_color) .. "\\3c&HFFFFFF\\fs28\\fn" .. icon_font .. "}",
@@ -1267,7 +1267,7 @@ layouts["box"] = function ()
     local osc_geo = {
         w = 550,    -- width
         h = 138,    -- height
-        r = 10,     -- corner-radius
+        r = 20,     -- corner-radius
         p = 15,     -- padding
     }
 

@@ -2,9 +2,451 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
+$UpdaterVersion = [version]"1.1.0"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
+$RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
+$script:ReleaseDownloaded = $false
 
+# ---------------------------------------------------------------------------
+# Registry helpers
+# ---------------------------------------------------------------------------
+
+function Ensure-RegistryRoot {
+    if (-not (Test-Path $RegistryRoot)) {
+        New-Item -Path $RegistryRoot -Force | Out-Null
+    }
+}
+
+function Get-InstalledVersion {
+    Ensure-RegistryRoot
+
+    try {
+        $v = Get-ItemPropertyValue -Path $RegistryRoot -Name "LastUpdateVersion" -ErrorAction Stop
+        return [version]$v
+    }
+    catch {
+        return [version]"1.0.0"
+    }
+}
+
+function Set-InstalledVersion([version]$Version) {
+    Ensure-RegistryRoot
+
+    Set-ItemProperty -Path $RegistryRoot `
+                     -Name "LastUpdateVersion" `
+                     -Value $Version.ToString()
+}
+
+# ---------------------------------------------------------------------------
+# Migration helpers
+# ---------------------------------------------------------------------------
+$migrations = @(
+    @{
+    Version = [version]"1.1.0"
+    Script = {
+		Ensure-Green-Light @"
+Due to significant changes, your config files will have to be updated to allow new features to work. Press 'y' to proceed, or press 'n' and back up your existing config files so you don't lose your custom settings and can integrate your personalised settings into the new config before proceeding with update...
+"@
+		Upgrade-mpv-Files-110
+        Ensure-PythonInstalled
+        Ensure-PythonPackage "subliminal"
+		Clean-Downloaded
+		Final-Message @"
+Upgrade complete.
+
+Go into your portable_config folder and update mpv.conf with your language preferences.
+
+Go into script-opts and update:
+ - auto-subs.conf: Set match to equal your criteria for auto enabling subs, e.g. "En,Forced", as in the example, will automatically activate subtitles when both "en" and "forced" are found in the subtitle track, which usually means in English shows the non-English speaking parts would be automatically subtitled, but you can set it for whatever language(s) you want to auto active, it will only activate if every string of characters in the comma separated list match the track, or completely disable it.
+ 
+ ---
+ 
+ - opensubs.conf: Everything is set up here for English. To change change osub(param)1 and 2 to match your primary and secondary language choices (see https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes for comprehensive reference), e.g.:
+   osubname1="English"
+   osubcode1a="en"
+   osubcode1b="eng"
+   osubname2="Espanol"
+   osubcode2a="es"
+   osubcode2b="es-419"
+
+  Would default the first subtitle search to English (in order full name, 2 char code, 3 or more alternate char code), and the secondary fallback to Spanish. There is also space to add your login info for the popular OpenSubs websites, though this is completely voluntary, and the plugin works fine without it.
+
+  If you haven't already, now is the perfect time to open up portable_config/mpv.conf and edit your language settings in there (no, really, because of a major change to the update system, the default mpv.conf will have possibly changed, and you may need to edit your preference in.
+
+mpv-synth now supports:
+ - smart subtitle selection
+ - forced subtitle detection
+ - OpenSubtitles integration
+ - automatic subtitle matching
+
+Either find the OpenSubs controls under the subtitles menu, or:
+Press Shift+s to choose subtitles.
+Press Alt+t to auto-download the best match.
+
+Future updates are now versioned and any specific changes that need to be made to bring an older version up to date are handled automatically by the updater.
+
+Thanks for using mpv-synth!
+"@
+    }
+}
+)
+
+# ---
+# Version update specific functions
+# ---
+
+function Ensure-PythonInstalled {
+
+    Write-Host ""
+    Write-Host "Checking for Python 3..."
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+
+	if (-not $python) {
+		$python = Get-Command py -ErrorAction SilentlyContinue
+	}
+
+    if ($python) {
+
+        $pycmd = Get-PythonCommand
+        $pyVersion = (& $pycmd --version 2>&1)
+
+        Write-Host "$pyVersion already installed."
+        return
+    }
+
+    Write-Host "Python not found."
+
+    try {
+
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+
+        if (-not $winget) {
+            throw "winget is not installed or not available."
+        }
+
+        Write-Host "Installing Python via winget..."
+
+        winget install `
+            --id Python.Python.3 `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "winget failed with exit code $LASTEXITCODE"
+        }
+
+        $maxAttempts = 10
+
+		for ($i = 0; $i -lt $maxAttempts; $i++) {
+
+			Refresh-EnvironmentPath
+
+			$python = Get-Command python -ErrorAction SilentlyContinue
+
+			if (-not $python) {
+				$python = Get-Command py -ErrorAction SilentlyContinue
+			}
+
+			if ($python) {
+				break
+			}
+
+			Start-Sleep -Seconds 2
+		}
+
+        $python = Get-Command python -ErrorAction SilentlyContinue
+
+		if (-not $python) {
+			$python = Get-Command py -ErrorAction SilentlyContinue
+		}
+
+        if (-not $python) {
+            throw "Python installation completed but python.exe is still unavailable."
+        }
+
+        $pycmd = Get-PythonCommand
+        $pyVersion = (& $pycmd --version 2>&1)
+
+        Write-Host "$pyVersion installed successfully."
+    }
+    catch {
+
+        throw "Python installation failed: $_"
+    }
+}
+
+function Refresh-EnvironmentPath {
+
+    $machinePath = [Environment]::GetEnvironmentVariable(
+        "Path",
+        "Machine"
+    )
+
+    $userPath = [Environment]::GetEnvironmentVariable(
+        "Path",
+        "User"
+    )
+
+    $env:Path = "$machinePath;$userPath"
+}
+
+function Ensure-PythonPackage {
+
+    param(
+        [string]$PackageName
+    )
+
+    Write-Host ""
+    Write-Host "Checking Python package: $PackageName"
+	
+	$pycmd = Get-PythonCommand
+
+    $installed = & $pycmd -m pip show $PackageName 2>$null
+
+    if ($LASTEXITCODE -eq 0) {
+
+        Write-Host "$PackageName already installed."
+        return
+    }
+
+    Write-Host "Installing $PackageName..."
+
+    & $pycmd -m pip install --upgrade pip
+
+    & $pycmd -m pip install $PackageName
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install $PackageName"
+    }
+
+    Write-Host "$PackageName installed successfully."
+}
+
+function Upgrade-mpv-Files-110 {
+
+    Write-Host "Updating mpv-synth..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+
+        Write-Host "Copying files..." -ForegroundColor Green
+
+        Copy-Item `
+            -Path (Join-Path $root.FullName '*') `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Download-Latest-Release {
+    Write-Host "Downloading mpv-synth latest release..." -ForegroundColor Green
+
+    $zip_url = "https://github.com/AJCrowley/mpv-synth/releases/latest/download/mpv-synth.zip"
+    $script:temp_zip = Join-Path $env:TEMP "mpv-synth.zip"
+    $script:extract_dir = Join-Path $env:TEMP "mpv_synth_extract"
+
+    # Download latest release
+    Write-Host "Downloading latest release..." -ForegroundColor Green
+    Invoke-WebRequest -Uri $zip_url -OutFile $temp_zip -UserAgent $useragent
+
+    # Clean + extract
+    if (Test-Path $script:extract_dir) {
+        Remove-Item $script:extract_dir -Recurse -Force
+    }
+	Expand-Archive -LiteralPath $script:temp_zip -DestinationPath $script:extract_dir -Force
+
+    # Root folder inside zip (GitHub zips always wrap)
+	$script:ReleaseRoot = Get-ChildItem $script:extract_dir -Directory | Select-Object -First 1
+	# Mark latest release as downloaded
+	$script:ReleaseDownloaded = $true
+}
+
+# ---
+# Complete version update
+# ---
+
+function Clean-Downloaded {
+
+    if ($script:ReleaseDownloaded) {
+
+        if (Test-Path $script:temp_zip) {
+            Remove-Item $script:temp_zip -Force
+        }
+
+        if (Test-Path $script:extract_dir) {
+            Remove-Item $script:extract_dir -Recurse -Force
+        }
+
+        $script:ReleaseDownloaded = $false
+    }
+}
+
+function Get-PythonCommand {
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+
+    if ($python) {
+        return "python"
+    }
+
+    $py = Get-Command py -ErrorAction SilentlyContinue
+
+    if ($py) {
+        return "py"
+    }
+
+    throw "Python launcher not found."
+}
+
+function Complete-SelfUpdate {
+    $dst_installer = Join-Path (Get-Location).Path "installer"
+    $temp_installer = "$dst_installer.new"
+
+    $dst_updater = $PSCommandPath
+    $temp_updater = "$dst_updater.new"
+
+    if (-not (Test-Path $temp_installer) -and -not (Test-Path $temp_updater)) {
+        return
+    }
+
+    Write-Host "Finalising updater replacement after exit..." -ForegroundColor Green
+
+    $commands = @()
+
+    $commands += 'Start-Sleep -Seconds 2'
+
+    if (Test-Path $temp_installer) {
+
+        $commands += "if (Test-Path '$dst_installer') { Remove-Item '$dst_installer' -Recurse -Force }"
+        $commands += "Move-Item '$temp_installer' '$dst_installer' -Force"
+    }
+
+    if (Test-Path $temp_updater) {
+
+        $commands += "Move-Item '$temp_updater' '$dst_updater' -Force"
+    }
+
+    $commandString = $commands -join '; '
+
+    Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-Command',
+        $commandString
+    )
+}
+
+function Ensure-Green-Light {
+
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message
+    )
+	
+	if ($Unattended) {
+		return
+	}
+
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host "IMPORTANT UPDATE NOTICE" -ForegroundColor Yellow
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host $Message -ForegroundColor White
+    Write-Host ""
+    Write-Host "It is strongly recommended that you back up your existing" -ForegroundColor DarkYellow
+    Write-Host "installation before continuing." -ForegroundColor DarkYellow
+    Write-Host ""
+
+    while ($true) {
+
+        $response = Read-Host "Continue? (Y/N)"
+
+        switch ($response.Trim().ToUpper()) {
+
+            "Y" {
+                Write-Host ""
+                Write-Host "Continuing update..." -ForegroundColor Green
+                Write-Host ""
+                return
+            }
+
+            "N" {
+                Write-Host ""
+                Write-Host "Update cancelled by user." -ForegroundColor Red
+                exit 1
+            }
+
+            default {
+                Write-Host "Please enter Y or N." -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function Final-Message {
+
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message
+    )
+
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host "UPDATE COMPLETE" -ForegroundColor Green
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host ""
+
+    Write-Host $Message -ForegroundColor White
+
+    Write-Host ""
+}
+
+function Invoke-Migrations {
+
+    $installed = Get-InstalledVersion
+
+    Write-Host "Installed version: $installed"
+    Write-Host "Updater version:   $UpdaterVersion"
+
+    foreach ($migration in ($migrations | Sort-Object Version)) {
+
+        if ($migration.Version -gt $installed) {
+
+            Write-Host ""
+            Write-Host "Running migration $($migration.Version)" -ForegroundColor Cyan
+
+            try {
+
+                & $migration.Script
+
+                Set-InstalledVersion $migration.Version
+
+                Write-Host "Migration completed." -ForegroundColor Green
+            }
+            catch {
+
+                Write-Host "Migration failed." -ForegroundColor Red
+                throw
+            }
+        }
+    }
+}
 # ---------------------------------------------------------------------------
 # 7-Zip helpers
 # ---------------------------------------------------------------------------
@@ -203,7 +645,7 @@ function Get-Arch {
 # ---------------------------------------------------------------------------
 
 function ExtractGitFromFile {
-    $stripped = .\mpv --no-config | Select-String "mpv" | Select-Object -First 1
+    $stripped = (& ".\mpv.exe" --no-config 2>&1) | Select-String "mpv" | Select-Object -First 1
     $stripped -match "-g([a-z0-9-]{7})" | Out-Null
     return $matches[1]
 }
@@ -499,7 +941,7 @@ function Upgrade-Mpv {
         # which are bundled in the release but belong only in the installer folder.
         Extract-Archive $remoteName -Exclude @("*.bat", "*.ps1", "doc", "installer")
     }
-    Check-Autodelete $remoteName
+    if ($remoteName) { Check-Autodelete $remoteName }
 }
 
 function Upgrade-Ytplugin {
@@ -715,6 +1157,7 @@ function Get-VapourSynth {
                  Select-Object -First 1
         if ($wheel) {
             Write-Host "Installing VapourSynth wheel..." -ForegroundColor Green
+			
             & "$py_tmp\python.exe" -m pip install $wheel.FullName "--no-warn-script-location"
         } else {
             Write-Host "VapourSynth wheel not found in portable zip." -ForegroundColor Red
@@ -804,94 +1247,6 @@ function Get-VSDLLs {
     }
 }
 
-function Upgrade-Scripts-And-Updater {
-    Write-Host "Checking for script updates..." -ForegroundColor Green
-
-    $zip_url = "https://github.com/AJCrowley/mpv-synth/releases/latest/download/mpv-synth.zip"
-    $temp_zip = Join-Path $env:TEMP "mpv-synth.zip"
-    $extract_dir = Join-Path $env:TEMP "mpv_synth_extract"
-
-    try {
-        # Download latest release
-        Write-Host "Downloading latest release..." -ForegroundColor Green
-        Invoke-WebRequest -Uri $zip_url -OutFile $temp_zip -UserAgent $useragent
-
-        # Clean + extract
-        if (Test-Path $extract_dir) {
-            Remove-Item $extract_dir -Recurse -Force
-        }
-        Expand-Archive -LiteralPath $temp_zip -DestinationPath $extract_dir -Force
-
-        # Root folder inside zip (GitHub zips always wrap)
-        $root = Get-ChildItem $extract_dir | Select-Object -First 1
-
-        # Paths
-        $src_scripts = Join-Path $root.FullName "portable_config\scripts"
-        $dst_scripts = Join-Path (Get-Location).Path "portable_config\scripts"
-        $src_script_opts = Join-Path $root.FullName "portable_config\script-opts"
-        $dst_scripts_opts = Join-Path (Get-Location).Path "portable_config\script-opts"
-        $src_updater = Join-Path $root.FullName "installer\updater.ps1"
-        $dst_updater = $MyInvocation.MyCommand.Path
-
-        # --- Update scripts (merge, don’t delete extras) ---
-        if (Test-Path $src_scripts) {
-            Write-Host "Updating scripts..." -ForegroundColor Green
-
-            if (-not (Test-Path $dst_scripts)) {
-                New-Item -ItemType Directory -Path $dst_scripts | Out-Null
-            }
-
-            Copy-Item "$src_scripts\*" $dst_scripts -Recurse -Force
-            Write-Host "Scripts updated (custom files preserved)" -ForegroundColor Green
-        }
-        else {
-            Write-Host "No scripts folder found in update." -ForegroundColor Yellow
-        }
-		
-		# --- Update script-opts (merge, don’t delete extras) ---
-        if (Test-Path $src_script_opts) {
-            Write-Host "Updating script options..." -ForegroundColor Green
-
-            if (-not (Test-Path $dst_script_opts)) {
-                New-Item -ItemType Directory -Path $dst_script_opts | Out-Null
-            }
-
-            # --- Extract any new options, don't overwrite existing ones
-			Get-ChildItem "$src_script_opts\*" -Recurse | 
-				Where-Object { -not (Test-Path (Join-Path $dst_script_opts ($_.FullName.Substring($src_script_opts.Length)))) } |
-				Copy-Item -Destination $dst_script_opts
-            Write-Host "Script options updated (custom files preserved)" -ForegroundColor Green
-        }
-        else {
-            Write-Host "No script options folder found in update." -ForegroundColor Yellow
-        }
-
-        # --- Self-update ---
-        if (Test-Path $src_updater) {
-            Write-Host "Updating updater.ps1..." -ForegroundColor Green
-
-            # Copy to temp first to avoid overwrite issues while running
-            $temp_self = "$dst_updater.new"
-            Copy-Item $src_updater $temp_self -Force
-
-            # Replace after script ends (safe approach)
-            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Start-Sleep 1; Move-Item -Force '$temp_self' '$dst_updater'`"" -WindowStyle Hidden
-
-            Write-Host "Updater will self-update after exit." -ForegroundColor Green
-        }
-        else {
-            Write-Host "No updater.ps1 found in update." -ForegroundColor Yellow
-        }
-    }
-    catch {
-        Write-Host "Script update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-    finally {
-        if (Test-Path $temp_zip) { Remove-Item $temp_zip -Force }
-        if (Test-Path $extract_dir) { Remove-Item $extract_dir -Recurse -Force }
-    }
-}
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -914,16 +1269,18 @@ try {
 		& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
 	}
     Upgrade-Mpv
-	if (-not $Installing) {
-		Upgrade-Scripts-And-Updater
-	}
     Get-VapourSynth
     Get-VSDLLs
     Upgrade-Ytplugin
     Upgrade-FFmpeg
+	Invoke-Migrations
+
+	Complete-SelfUpdate
+
 	if ($Unattended) {
 		exit 0
 	}
+
     Write-Host "Operation completed" -ForegroundColor Magenta
 }
 catch [System.Exception] {

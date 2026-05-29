@@ -71,7 +71,7 @@ local function apply_fps(fps)
     mp.commandv("vf", "remove", VS_FILTER)
     if fps and fps > 0 then
         mp.commandv("vf", "add", VS_FILTER)
-        mp.osd_message("VapourSynth FPS: " .. fps, 2)
+        mp.osd_message("VapourSynth FPS: " .. fps, 5)
         mp.msg.info("VapourSynth filter applied at " .. fps .. " fps")
     else
         mp.msg.info("VapourSynth filter removed")

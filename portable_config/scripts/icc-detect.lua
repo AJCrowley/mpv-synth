@@ -20,7 +20,7 @@ local utils = require 'mp.utils'
 
 local o = {
     enabled      = true,
-    icc_for_sdr  = true,
+    icc_for_sdr  = false,
     tone_mapping = "bt.2390",
     osd_notify   = true,
     osd_duration = 5,
@@ -74,7 +74,7 @@ local function apply_profile(profile)
         mp.set_property("tone-mapping", o.tone_mapping)
         mp.set_property("hdr-compute-peak", "yes")
         mp.set_property("target-colorspace-hint", "no")
-        notify("HDR ??? SDR tone mapping (" .. o.tone_mapping .. ")")
+        notify("HDR → SDR tone mapping (" .. o.tone_mapping .. ")")
 
     elseif profile == "wide-sdr" then
         if o.icc_for_sdr then
@@ -125,7 +125,7 @@ local function detect_content(filename)
         end
     end
 
-    if transfer == "bt709" and not o.icc_for_sdr then
+    if transfer == "bt709" and not display_is_hdr() then
         return nil
     end
 

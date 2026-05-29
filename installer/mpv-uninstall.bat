@@ -85,6 +85,11 @@ for /f "usebackq delims=" %%k in (`reg query "%classes_root_key%" /f "io.mpv." /
 )
 
 :: -------------------------------
+:: Remove Registry Versioning Info
+:: -------------------------------
+reg delete "HKLM\SOFTWARE\mpv-synth" /f
+
+:: -------------------------------
 :: Remove Start Menu shortcut
 :: -------------------------------
 del "%ProgramData%\Microsoft\Windows\Start Menu\Programs\mpv-synth.lnk" >nul 2>&1

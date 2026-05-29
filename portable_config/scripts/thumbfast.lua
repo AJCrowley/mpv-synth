@@ -19,8 +19,8 @@ local options = {
 
     -- Maximum thumbnail generation size in pixels (scaled down to fit)
     -- Values are scaled when hidpi is enabled
-    max_height = 200,
-    max_width = 200,
+    max_height = 150,
+    max_width = 150,
 
     -- Scale factor for thumbnail display size (requires mpv 0.38+)
     -- Note that this is lower quality than increasing max_height and max_width
@@ -36,7 +36,7 @@ local options = {
     spawn_first = false,
 
     -- Close thumbnailer process after an inactivity period in seconds, 0 to disable
-    quit_after_inactivity = 0,
+    quit_after_inactivity = 3,
 
     -- Enable on network playback
     network = false,
@@ -193,6 +193,8 @@ local file_timer
 local file_check_period = 1/120
 
 local allow_fast_seek = true
+
+local clear, quit, thumb, watch_changes
 
 local client_script = [=[
 #!/usr/bin/env bash
@@ -475,16 +477,19 @@ local function spawn(time)
     has_vid = vid or 0
 
     local args = {
-        mpv_path, "--no-config", "--msg-level=all=no", "--idle", "--pause", "--keep-open=always", "--really-quiet", "--no-terminal",
+        mpv_path, "--no-config", "--msg-level=all=no", "--idle", "--pause", "--keep-open=always",
+        "--really-quiet", "--no-terminal",
         "--load-scripts=no", "--osc=no", "--ytdl=no", "--load-stats-overlay=no", "--load-osd-console=no", "--load-auto-profiles=no",
-        "--edition="..(properties["edition"] or "auto"), "--vid="..(vid or "auto"), "--no-sub", "--no-audio",
+        "--edition="..(properties["edition"] or "auto"), "--vid="..("auto"),
+        "--no-sub", "--no-audio",
         "--start="..time, allow_fast_seek and "--hr-seek=no" or "--hr-seek=yes",
-        "--ytdl-format=worst", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=128KiB",
+        "--ytdl-format=worst",
+        "--demuxer-readahead-secs=0", "--demuxer-max-bytes=256KiB",
         "--vd-lavc-skiploopfilter=all", "--vd-lavc-software-fallback=1", "--vd-lavc-fast", "--vd-lavc-threads=2", "--hwdec="..(options.hwdec and "auto" or "no"),
         "--vf="..vf_string(filters_all, true),
         "--sws-scaler=fast-bilinear",
-        "--video-rotate="..last_rotate,
-        "--ovc=rawvideo", "--of=image2", "--ofopts=update=1", "--o="..options.thumbnail
+        "--video-rotate=" .. (last_rotate or 0),
+        "--ovc=rawvideo", "--of=image2", "--ofopts=update=1", "--o="..options.thumbnail,
     }
 
     if not pre_0_30_0 then
@@ -613,7 +618,7 @@ local function draw(w, h, script)
     if not w or not show_thumbnail then return end
     if x ~= nil then
         local scale_w, scale_h = options.scale_factor ~= 1 and (w * options.scale_factor) or nil, options.scale_factor ~= 1 and (h * options.scale_factor) or nil
-        local path = bgra_path()
+        local path = bgra_path(thumb_slot)
         if pre_0_30_0 then
             mp.command_native({"overlay-add", options.overlay_id, x, y, path, 0, "bgra", w, h, (4*w), scale_w, scale_h})
         else
@@ -622,6 +627,7 @@ local function draw(w, h, script)
                 -- so the display self-heals rather than freezing on the last frame.
                 if not success and show_thumbnail and spawned and last_seek_time then
                     mp.msg.warn("thumbfast: overlay-add failed, re-seeking")
+                    remove_thumbnail_files()
                     if not file_timer:is_enabled() then file_timer:resume() end
                     request_seek()
                 end
@@ -760,7 +766,7 @@ file_timer = mp.add_periodic_timer(file_check_period, function()
 end)
 file_timer:kill()
 
-local function clear()
+clear = function()
     file_timer:kill()
     seek_timer:kill()
     if options.quit_after_inactivity > 0 then
@@ -783,7 +789,7 @@ local function clear()
     end
 end
 
-local function quit()
+quit = function()
     activity_timer:kill()
     if show_thumbnail then
         activity_timer:resume()
@@ -798,7 +804,7 @@ end
 activity_timer = mp.add_timeout(options.quit_after_inactivity, quit)
 activity_timer:kill()
 
-local function thumb(time, r_x, r_y, script)
+thumb = function(time, r_x, r_y, script)
     if disabled then return end
 
     time = tonumber(time)
@@ -833,7 +839,7 @@ local function thumb(time, r_x, r_y, script)
     request_seek()
 end
 
-local function watch_changes()
+watch_changes = function()
     if not dirty or not properties["video-out-params"] then return end
     dirty = false
 

@@ -959,9 +959,7 @@ mp.observe_property("osd-dimensions",   "native", on_osd_dimensions)
 mp.observe_property("video-out-params", "native", on_video_params)
 mp.observe_property("mouse-pos",        "native", on_mouse_pos)
 mp.observe_property("pause",            "bool",   on_pause)
-mp.observe_property("fullscreen",       "bool",   function(_, v)
-    if v ~= nil then on_fullscreen() end
-end)
+mp.observe_property("fullscreen",       "bool",   on_fullscreen)
 
 mp.register_event("file-loaded", on_file_loaded)
 mp.register_event("end-file",    on_end_file)
