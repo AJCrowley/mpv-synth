@@ -149,14 +149,23 @@ end
 function show_subtitle_selection(language, subtitles)
     
     local subs = {}
+    local title = ""
 
     for i, sub in ipairs(subtitles) do
-        subs[i] =
-            tostring(sub.provider or "unknown") .. " - " ..
-            tostring(sub.series or sub.title or "Unknown") ..
-            " (" .. tostring(sub.language or "??") .. ")" ..
-            " S" .. tostring(string.format("%02d", sub.season or 0) or "??") ..
-            "E" .. tostring(string.format("%02d", sub.episode or 0) or "??")
+        if sub.series or sub.title or sub.season or sub.episode then
+            title = tostring(sub.provider or "Unknown") .. " - " ..
+            tostring(sub.series or "") .. " - " .. tostring(sub.title or "") ..
+            " (" .. tostring(sub.language or "") .. ")"
+            if sub.season then
+                title = title .. " S" .. tostring(string.format("%02d", sub.season))
+            end
+            if sub.episode then
+                title = title .. "E" .. tostring(string.format("%02d", sub.episode))
+            end
+        else
+            title = tostring(sub.provider or "Unknown Provider") .. " - " .. tostring(sub.language or "") .. " subtitle " .. sub.id
+        end
+        subs[i] = title
     end
 
     input.select({
@@ -206,7 +215,7 @@ function download_subs(language)
     end
             
     log('Searching ' .. language[1] .. ' subtitles ...', 30)
-
+    
     directory, filename = utils.split_path(mp.get_property('path'))
 
     -- Build the `subliminal` command, starting with the executable:
@@ -253,6 +262,44 @@ function download_subs(language)
         return false
     end
 end
+
+-- Control function: only download if necessary
+-- function control_downloads()
+--     -- Make MPV accept external subtitle files with language specifier:
+--     mp.set_property('sub-auto', 'fuzzy')
+--     -- Set subtitle language preference:
+--     mp.set_property('slang', languages[1][2])
+--     mp.msg.warn('Reactivate external subtitle files:')
+--     mp.commandv('rescan_external_files')
+
+--     if not autosub_allowed() then
+--         return
+--     end
+
+--     sub_tracks = {}
+--     for _, track in ipairs(mp.get_property_native('track-list')) do
+--         if track['type'] == 'sub' then
+--             sub_tracks[#sub_tracks + 1] = track
+--         end
+--     end
+--     if bools.debug then -- Log subtitle properties to terminal:
+--         for _, track in ipairs(sub_tracks) do
+--             mp.msg.warn('Subtitle track', track['id'], ':\n{')
+--             for k, v in pairs(track) do
+--                 if type(v) == 'string' then v = '"' .. v .. '"' end
+--                 mp.msg.warn('  "' .. k .. '":', v)
+--             end
+--             mp.msg.warn('}\n')
+--         end
+--     end
+
+--     for _, language in ipairs(languages) do
+--         if should_download_subs_in(language) then
+--             if download_subs(language) then return end -- Download successful!
+--         else return end -- No need to download!
+--     end
+--     log('No subtitles were found')
+-- end
 
 -- Check if subtitles should be auto-downloaded:
 function autosub_allowed()
@@ -302,6 +349,35 @@ function autosub_allowed()
 
     return true
 end
+
+-- Check if subtitles should be downloaded in this language:
+-- function should_download_subs_in(language)
+--     for i, track in ipairs(sub_tracks) do
+--         local subtitles = track['external'] and
+--           'subtitle file' or 'embedded subtitles'
+
+--         if not track['lang'] and (track['external'] or not track['title'])
+--           and i == #sub_tracks then
+--             local status = track['selected'] and ' active' or ' present'
+--             log('Unknown ' .. subtitles .. status)
+--             mp.msg.warn('=> NOT downloading new subtitles')
+--             return false -- Don't download if 'lang' key is absent
+--         elseif track['lang'] == language[3] or track['lang'] == language[2] or
+--           (track['title'] and track['title']:lower():find(language[3])) then
+--             if not track['selected'] then
+--                 mp.set_property('sid', track['id'])
+--                 log('Enabled ' .. language[1] .. ' ' .. subtitles .. '!')
+--             else
+--                 log(language[1] .. ' ' .. subtitles .. ' active')
+--             end
+--             mp.msg.warn('=> NOT downloading new subtitles')
+--             return false -- The right subtitles are already present
+--         end
+--     end
+--     mp.msg.warn('No ' .. language[1] .. ' subtitles were detected\n' ..
+--                 '=> Proceeding to download:')
+--     return true
+-- end
 
 -- Log function: log to both terminal and MPV OSD (On-Screen Display)
 function log(string, secs)
