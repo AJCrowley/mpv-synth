@@ -224,7 +224,7 @@ If the filmstrip is impacting playback performance during generation, reducing `
 
 ### Some videos just show as 50% grey
 
-Some monitors have difficulty tone mapping bt.709 colour profile. To disable automatic switching to this icc colour profile, just edit the file ```portable_config\script-opts\icc-detect.conf``` and remove the ```#``` at the start of the line ```icc_for_sdr=no```. This will prevent auto switching to this colour profile, or more immediately, just press ```Ctrl+i```.
+This issue should be fixed now in the icc-detect plugin. If it still happens, press ```Ctrl+i``` to turn off the ICC colour profile, and open a ticket in the issues tab to let me know that there's still an edge case problem.
 
 ### Any other issues
 
