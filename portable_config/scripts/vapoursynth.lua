@@ -9,8 +9,14 @@ local CURRENT_PATH_FILE  = mp.command_native({"expand-path", "~~/"}) .. "/Vapour
 local BUFFERED_FRAMES    = 6
 local VS_FILTER          = "vapoursynth=~~/VapourSynth/vapoursynth.vpy:buffered-frames=" .. BUFFERED_FRAMES
 
-mp.msg.info("VapourSynth script initialized. Prefs file: " .. PREFS_FILE)
+local options = {
+    auto-apply = false,
+    auto-fps = 60,
+    auto-max-res = 1920 -- automatically apply if resolution is equal to or less than
+}
 
+mp.msg.info("VapourSynth script initialized. Prefs file: " .. PREFS_FILE)
+mp.options.read_options(options, "vapoursynth")
 -- ---------------------------------------------------------------------------
 -- Prefs file I/O
 -- ---------------------------------------------------------------------------
@@ -140,4 +146,14 @@ mp.register_script_message("vapoursynth_set_fps", function(fps_str)
     end
     write_prefs(prefs)
     apply_fps(fps)
+end)
+
+-- watch video width property to auto-apply VapourSynth filter if enabled and resolution is below threshold
+mp.observe_property("video-params/w", "native", function(_, width)
+    if options.auto-apply then
+        if width and width <= options.auto-max-res then
+            mp.msg.info("Auto-applying VapourSynth filter at " .. options.auto-fps)
+            mp.commandv("script-message", "vapoursynth_set_fps", tostring(options.auto-fps))
+        end
+    end
 end)

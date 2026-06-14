@@ -90,6 +90,26 @@ Thanks for using mpv-synth!
 "@
     }
 }
+@{
+    Version = [version]"1.1.1"
+    Script = {
+		Final-Message @"
+Upgrade complete.
+
+If you have something better than stereo sound, go into your portable_config folder and update mpv.conf to match your sound system.
+
+If you are running better than stereo sound setup (e.g. 5.1, 7.1, Dolby Atmos, recommend downloading Dolby Access from Windows Store and enabling Dolby Atmos for home theater on the products page, make sure to click the speakers, as the headphones version is not a free product), you can uncomment the three bottom lines ([correct-speakers]) by removing the # symbol to make sure that mpv is always outputting the right number of channels for your setup, upmixing and downmixing as necessary. The number 6 in the condition is for 5.1, change it to 8 for 7.1 setups. If you're not running a 5.1 or 7.1 setup you don't need to worry about uncommenting this block.
+
+If Windows isn't correctly decoding any surround format, you can set it to bypass Windows Sound Manager and send the digital signal directly to your sound system, just uncomment the 4 lines in the AUDIO SETTINGS portion of the mpv.conf file. audio-spdif and audio-exclusive will lock the sound and send the raw signal to your sound system to decode, note that this will bypass Windows volume control.
+
+Finally, VapourSynth now has an option to automatically set a framerate. Open the file portable_config\script-opts\vapoursynth.conf and set auto-apply to yes if you want it to do it. The defaults are 60fps for 1080p and lower, but you can customize these values to your preference, e.g. change the number to 1280 for only 720p, or up it to 3840 for 4K video if your system can handle it.
+
+I hope to build a better UI for updating and managing configurations for people who aren't comfortable editing text files in the coming months, but the priority will be determined by the number of people who actually use mpv-synth, and it's hard to get a good reading on that as I don't collect telemetry from people (feel free to go to https://buymeacoffee.com/AJCrowley if you want to support the project, that's the best way to let me know that people are using this software and are enthusiastic about it!).
+
+Thanks for using mpv-synth!
+"@
+    }
+}
 )
 
 # ---

@@ -898,6 +898,7 @@ local function on_fullscreen()
     -- after with the new OSD size and starts a fresh resize_timer.
     remove_composite()
     anim_state = "hidden"; slide_progress = 0.0; last_anim_y = nil
+    if remap() == false then build() end
 end
 
 local function on_osd_dimensions(_, val)
