@@ -152,7 +152,7 @@ end)
 mp.observe_property("video-params/w", "native", function(_, width)
     if options.auto_apply then
         if width and width <= options.auto_max_res then
-            mp.msg.info("Auto-applying VapourSynth filter at " .. options.auto_)
+            mp.msg.info("Auto-applying VapourSynth filter at " .. options.auto_fps)
             mp.commandv("script-message", "vapoursynth_set_fps", tostring(options.auto_fps))
         end
     end
