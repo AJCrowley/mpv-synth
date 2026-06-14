@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "name": "mpv-synth player",
+  "version": "1.0",
+  "description": "Right-click any page or link to play it in mpv-synth media player.",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "nativeMessaging",
+    "tabs",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "32":  "icons/icon32.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "mpv-synth player — click to open settings"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mpv-synth@extension",
+      "strict_min_version": "91.0"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "com.mpvsynth.launcher",
+  "description": "mpv-synth native messaging host — launches mpv with a given URL",
+  "path": "PLACEHOLDER_REPLACED_BY_INSTALL_BAT",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://opmkcnnaphplcmphaebinkddpcfakjla/"
+  ],
+  "allowed_extensions": [
+    "mpv-synth@extension"
+  ]
+}

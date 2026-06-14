@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "mpv-synth player",
+  "version": "1.0",
+  "description": "Right-click any page or link to play it in mpv-synth media player.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxiOa7PBZLnfgSHq6FVjC7Dle37cRaPWuNlnJMu2xG1RaQlwA2j8yiCv1pTZWU3g6hlPXMeJtA1+N2fB7evZSmvt1PcEcT+GPsl9Mexijf7E60Gv+tPNFxjwzlOp6aSMWc7gLU9zrm4x2HwTGuYAUlK6ThN7nvdVVW3eo6sHH+0uIs90vaHHjdMdzoALhci/ESeRzjxuTjqEO0rovo6MK6Q3LjmlspREbefuVbthM21Pjo7dr1MBk/zmCh5amkNn6o7awDAI+5eNTdLxBo/LqgFgEA2GZ6b/KmV+tFOjN6RsisHsA7FesKvz0K9/cvnm9ev5R+0qxm2sk2meB5fCcQIDAQAB",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "nativeMessaging",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "32":  "icons/icon32.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "mpv-synth player — click to open settings"
+  }
+}
