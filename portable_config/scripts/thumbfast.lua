@@ -27,7 +27,7 @@ local options = {
     scale_factor = 1,
 
     -- Apply tone-mapping, no to disable
-    tone_mapping = "no",
+    tone_mapping = "yes",
 
     -- Overlay id
     overlay_id = 42,
