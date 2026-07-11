@@ -110,6 +110,19 @@ Thanks for using mpv-synth!
 "@
     }
 }
+@{
+    Version = [version]"1.1.2"
+    Script = {
+		Upgrade-mpv-Files-112
+		Final-Message @"
+Upgrade complete.
+
+OSC skin as supplement to UOSC has been removed and replaced with osc-simplified. A nicer looking and much
+
+Thanks for using mpv-synth!
+"@
+    }
+}
 )
 
 # ---
@@ -257,6 +270,36 @@ function Upgrade-mpv-Files-110 {
 
         $root = $script:ReleaseRoot
         $destination = (Get-Location).Path
+
+        Write-Host "Copying files..." -ForegroundColor Green
+
+        Copy-Item `
+            -Path (Join-Path $root.FullName '*') `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Upgrade-mpv-Files-112 {
+
+    Write-Host "Updating mpv-synth..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+		Remove-Item -Path (Join-Path $destination "portable_config\scripts\osc.lua") -Force -ErrorAction SilentlyContinue
+		Remove-Item -Path (Join-Path $destination "portable_config\script-opts\osc.conf") -Force -ErrorAction SilentlyContinue
 
         Write-Host "Copying files..." -ForegroundColor Green
 
