@@ -111,9 +111,9 @@ Thanks for using mpv-synth!
     }
 }
 @{
-    Version = [version]"1.1.2"
+    Version = [version]"1.1.3"
     Script = {
-		Upgrade-mpv-Files-112
+		Upgrade-mpv-Files-113
 		Final-Message @"
 Upgrade complete.
 
@@ -286,7 +286,7 @@ function Upgrade-mpv-Files-110 {
     }
 }
 
-function Upgrade-mpv-Files-112 {
+function Upgrade-mpv-Files-113 {
 
     Write-Host "Updating mpv-synth..." -ForegroundColor Green
 
