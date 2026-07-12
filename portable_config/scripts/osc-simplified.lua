@@ -71,8 +71,6 @@ local user_opts = {
     skip_backward_mbtn_right_command = "seek -60",
 
     play_pause_mbtn_left_command = "cycle pause",
-    play_pause_mbtn_mid_command = "cycle-values loop-playlist inf no",
-    play_pause_mbtn_right_command = "cycle-values loop-file inf no",
 }
 
 local icon_font = "IINAOSC"
