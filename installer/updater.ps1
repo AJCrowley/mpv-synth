@@ -2,7 +2,7 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
-$UpdaterVersion = [version]"1.1.0"
+$UpdaterVersion = [version]"1.1.4"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
