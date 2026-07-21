@@ -27,7 +27,7 @@ local options = {
     scale_factor = 1,
 
     -- Apply tone-mapping, no to disable
-    tone_mapping = "yes",
+    tone_mapping = "no",
 
     -- Overlay id
     overlay_id = 42,
@@ -183,6 +183,45 @@ local last_rotate = 0
 
 local par = ""
 local last_par = ""
+
+-- Determine actual rendered resolution from the output file size.
+-- Handles cases where the subprocess output dimensions differ from effective_w/effective_h:
+--   * 90/270 degree rotation transposes the output buffer
+--   * lavfi-crop changes input dimensions before the scale filter
+--   * PAR != 1 videos with non-square pixels
+--   * HiDPI scale mis-accounting
+-- Returns the real width/height that the .bgra file represents, or nil if it can't be
+-- determined (in which case the thumbnail should be rejected).
+local function real_res(req_w, req_h, filesize)
+    local count = filesize / 4
+    local diff = (req_w * req_h) - count
+
+    -- Rotated 90/270 degrees means the buffer is transposed
+    if (properties["video-params"] and properties["video-params"]["rotate"] or 0) % 180 == 90 then
+        req_w, req_h = req_h, req_w
+    end
+
+    if diff == 0 then
+        return req_w, req_h
+    end
+
+    -- The size doesn't match the requested dims. Try to find a (w, h) pair whose
+    -- pixel count matches count, within a small threshold of the requested dims.
+    local threshold = 5
+    local long_side, short_side = req_w, req_h
+    if req_h > req_w then
+        long_side, short_side = req_h, req_w
+    end
+    for a = short_side, short_side - threshold, -1 do
+        if count % a == 0 then
+            local b = count / a
+            if long_side - b < threshold then
+                if req_h < req_w then return b, a else return a, b end
+            end
+        end
+    end
+    return nil
+end
 
 local last_crop = nil
 
@@ -715,14 +754,36 @@ function check_new_thumb()
     if not finfo then return false end
     spawn_waiting = false
     if finfo.size and finfo.size > 0 then
-        local w = effective_w
-        local h = effective_h
-        local expected_bytes = effective_w * effective_h * 4
-        if finfo.size < expected_bytes then
-            os.remove(options.thumbnail)  -- remove partial file to avoid repeated hits
-            return false
-        end
-        if w then -- only accept valid thumbnails
+        -- Determine the real rendered resolution from the file size. This handles
+        -- rotated videos, crops, and PAR != 1 where the actual file dimensions
+        -- may not match effective_w/effective_h.
+        local w, h = real_res(effective_w, effective_h, finfo.size)
+        if w then
+            -- Reject all-black frames: a valid-size all-zero BGRA buffer usually
+            -- means the decoder emitted a black intra frame (common with hwdec
+            -- on the first frame after seek) before motion compensation completed.
+            local f = io.open(options.thumbnail, "rb")
+            if f then
+                local mid_offset = math.floor(finfo.size / 2)
+                f:seek("set", mid_offset)
+                local sample = f:read(64)
+                f:close()
+                if sample then
+                    local all_black = true
+                    for i = 1, #sample do
+                        if sample:byte(i) ~= 0 then
+                            all_black = false
+                            break
+                        end
+                    end
+                    if all_black then
+                        mp.msg.debug("thumbfast: rejected all-black frame, retrying")
+                        os.remove(options.thumbnail)
+                        return false
+                    end
+                end
+            end
+
             move_file(options.thumbnail)
 
             real_w, real_h = w, h
