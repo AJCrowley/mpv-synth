@@ -122,6 +122,16 @@ OSC skin as supplement to UOSC has been removed and replaced with osc-simplified
 Thanks for using mpv-synth!
 "@
     }
+@{
+    Version = [version]"1.1.4"
+    Script = {
+		Upgrade-mpv-Files-114
+		Final-Message @"
+Upgrade complete.
+
+Thanks for using mpv-synth!
+"@
+    }
 }
 )
 
@@ -308,6 +318,46 @@ function Upgrade-mpv-Files-113 {
             -Destination $destination `
             -Recurse `
             -Force
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Upgrade-mpv-Files-114 {
+
+    Write-Host "Updating thumbfast.lua..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+
+        # Just extract the updated thumbfast.lua from the release zip and overwrite
+        # the matching file in the user's install. Avoids clobbering any other files
+        # the user may have customised.
+        $source = Join-Path $root.FullName "portable_config\scripts\thumbfast.lua"
+        $target = Join-Path $destination "portable_config\scripts\thumbfast.lua"
+
+        if (-not (Test-Path $source)) {
+            throw "thumbfast.lua not found in release at $source"
+        }
+
+        Write-Host "Copying thumbfast.lua..." -ForegroundColor Green
+
+        # Make sure the target directory exists (it should, but be defensive)
+        $targetDir = Split-Path $target -Parent
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+
+        Copy-Item -Path $source -Destination $target -Force
 
         Write-Host "Update complete." -ForegroundColor Green
     }
