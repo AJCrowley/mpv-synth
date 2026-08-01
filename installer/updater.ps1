@@ -110,29 +110,31 @@ Thanks for using mpv-synth!
 "@
     }
 }
-@{
-    Version = [version]"1.1.3"
-    Script = {
-		Upgrade-mpv-Files-113
-		Final-Message @"
+    @{
+        Version = [version]"1.1.3"
+        Script = {
+            Upgrade-mpv-Files-113
+            Final-Message @"
 Upgrade complete.
 
-OSC skin as supplement to UOSC has been removed and replaced with osc-simplified. A nicer looking and much
+OSC skin as supplement to UOSC has been removed and replaced with osc-simplified.
 
 Thanks for using mpv-synth!
 "@
+        }
     }
-@{
-    Version = [version]"1.1.4"
-    Script = {
-		Upgrade-mpv-Files-114
-		Final-Message @"
+
+    @{
+        Version = [version]"1.1.4"
+        Script = {
+            Upgrade-mpv-Files-114
+            Final-Message @"
 Upgrade complete.
 
 Thanks for using mpv-synth!
 "@
+        }
     }
-}
 )
 
 # ---
@@ -144,81 +146,147 @@ function Ensure-PythonInstalled {
     Write-Host ""
     Write-Host "Checking for Python 3..."
 
-    $python = Get-Command python -ErrorAction SilentlyContinue
+    $pycmd = Get-PythonCommand
 
-	if (-not $python) {
-		$python = Get-Command py -ErrorAction SilentlyContinue
-	}
-
-    if ($python) {
-
-        $pycmd = Get-PythonCommand
+    if ($pycmd) {
         $pyVersion = (& $pycmd --version 2>&1)
-
         Write-Host "$pyVersion already installed."
         return
     }
 
     Write-Host "Python not found."
 
-    try {
+    $installedOk = $false
 
-        $winget = Get-Command winget -ErrorAction SilentlyContinue
+    # Try winget first, but don't trust it blindly. Under an elevated /
+    # "Run as Administrator" session, `Get-Command winget` frequently fails
+    # to resolve even when winget IS installed, because winget.exe is an App
+    # Execution Alias tied to the interactively logged-in user's profile and
+    # doesn't reliably carry over to a separate elevated token. Check the
+    # known alias path directly as well before giving up on winget.
+    $wingetExe = $null
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
 
-        if (-not $winget) {
-            throw "winget is not installed or not available."
-        }
-
-        Write-Host "Installing Python via winget..."
-
-        winget install `
-            --id Python.Python.3 `
-            --silent `
-            --accept-package-agreements `
-            --accept-source-agreements
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "winget failed with exit code $LASTEXITCODE"
-        }
-
-        $maxAttempts = 10
-
-		for ($i = 0; $i -lt $maxAttempts; $i++) {
-
-			Refresh-EnvironmentPath
-
-			$python = Get-Command python -ErrorAction SilentlyContinue
-
-			if (-not $python) {
-				$python = Get-Command py -ErrorAction SilentlyContinue
-			}
-
-			if ($python) {
-				break
-			}
-
-			Start-Sleep -Seconds 2
-		}
-
-        $python = Get-Command python -ErrorAction SilentlyContinue
-
-		if (-not $python) {
-			$python = Get-Command py -ErrorAction SilentlyContinue
-		}
-
-        if (-not $python) {
-            throw "Python installation completed but python.exe is still unavailable."
-        }
-
-        $pycmd = Get-PythonCommand
-        $pyVersion = (& $pycmd --version 2>&1)
-
-        Write-Host "$pyVersion installed successfully."
+    if ($winget) {
+        $wingetExe = $winget.Source
     }
-    catch {
-
-        throw "Python installation failed: $_"
+    else {
+        $wingetAliasPath = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"
+        if (Test-Path $wingetAliasPath) {
+            $wingetExe = $wingetAliasPath
+        }
     }
+
+    if ($wingetExe) {
+
+        try {
+            Write-Host "Installing Python via winget..."
+
+            & $wingetExe install `
+                --id Python.Python.3 `
+                --silent `
+                --accept-package-agreements `
+                --accept-source-agreements
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "winget failed with exit code $LASTEXITCODE"
+            }
+
+            $maxAttempts = 10
+
+            for ($i = 0; $i -lt $maxAttempts; $i++) {
+
+                Refresh-EnvironmentPath
+
+                if (Get-PythonCommand) {
+                    $installedOk = $true
+                    break
+                }
+
+                Start-Sleep -Seconds 2
+            }
+        }
+        catch {
+            Write-Host "winget install did not succeed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "winget is not available in this session." -ForegroundColor Yellow
+    }
+
+    if (-not $installedOk) {
+
+        Write-Host "Falling back to a direct download of the official Python installer..." -ForegroundColor Yellow
+
+        try {
+            Install-PythonDirect
+            Refresh-EnvironmentPath
+
+            if (Get-PythonCommand) {
+                $installedOk = $true
+            }
+        }
+        catch {
+            throw "Python installation failed: $_"
+        }
+    }
+
+    $pycmd = Get-PythonCommand
+
+    if (-not $pycmd) {
+        throw "Python installation completed but python.exe is still unavailable."
+    }
+
+    $pyVersion = (& $pycmd --version 2>&1)
+    Write-Host "$pyVersion installed successfully."
+}
+
+function Get-LatestPythonInstaller {
+    # Discover the latest available 3.13.x patch release by probing python.org
+    # directly (same pattern already used elsewhere in this script for the
+    # VapourSynth embeddable build), then return the download URL + version.
+    $py_major = 3; $py_minor = 13; $py_patch = 0
+
+    for ($i = 0; $i -le 20; $i++) {
+        $py_uri = "https://www.python.org/ftp/python/$py_major.$py_minor.$i/python-$py_major.$py_minor.$i-amd64.exe"
+        try {
+            Invoke-WebRequest -Uri $py_uri -Method Head -UseBasicParsing -UserAgent $useragent | Out-Null
+            $py_patch = $i
+        } catch { break }
+    }
+
+    if ($py_patch -eq 0) {
+        # Known-good fallback build in case the probe above fails entirely
+        # (e.g. transient network issue).
+        $py_patch = 7
+    }
+
+    $version = "$py_major.$py_minor.$py_patch"
+    $url = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
+    return $url, $version
+}
+
+function Install-PythonDirect {
+    $url, $version = Get-LatestPythonInstaller
+    $installer = Join-Path $env:TEMP "python-$version-amd64.exe"
+
+    Write-Host "Downloading Python $version installer..." -ForegroundColor Green
+    Invoke-WebRequest -Uri $url -OutFile $installer -UserAgent $useragent
+
+    Write-Host "Installing Python $version silently (this can take a minute)..." -ForegroundColor Green
+    $proc = Start-Process -FilePath $installer -ArgumentList @(
+        "/quiet",
+        "InstallAllUsers=1",
+        "PrependPath=1",
+        "Include_launcher=1",
+        "Include_test=0"
+    ) -Wait -PassThru
+
+    if ($proc.ExitCode -ne 0) {
+        throw "Python installer exited with code $($proc.ExitCode)"
+    }
+
+    Remove-Item $installer -Force -ErrorAction SilentlyContinue
 }
 
 function Refresh-EnvironmentPath {
@@ -246,6 +314,10 @@ function Ensure-PythonPackage {
     Write-Host "Checking Python package: $PackageName"
 	
 	$pycmd = Get-PythonCommand
+
+    if (-not $pycmd) {
+        throw "Python is required to install '$PackageName' but was not found."
+    }
 
     $installed = & $pycmd -m pip show $PackageName 2>$null
 
@@ -339,9 +411,6 @@ function Upgrade-mpv-Files-114 {
         $root = $script:ReleaseRoot
         $destination = (Get-Location).Path
 
-        # Just extract the updated thumbfast.lua from the release zip and overwrite
-        # the matching file in the user's install. Avoids clobbering any other files
-        # the user may have customised.
         $source = Join-Path $root.FullName "portable_config\scripts\thumbfast.lua"
         $target = Join-Path $destination "portable_config\scripts\thumbfast.lua"
 
@@ -351,7 +420,6 @@ function Upgrade-mpv-Files-114 {
 
         Write-Host "Copying thumbfast.lua..." -ForegroundColor Green
 
-        # Make sure the target directory exists (it should, but be defensive)
         $targetDir = Split-Path $target -Parent
         if (-not (Test-Path $targetDir)) {
             New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
@@ -373,25 +441,17 @@ function Download-Latest-Release {
     $script:temp_zip = Join-Path $env:TEMP "mpv-synth.zip"
     $script:extract_dir = Join-Path $env:TEMP "mpv_synth_extract"
 
-    # Download latest release
     Write-Host "Downloading latest release..." -ForegroundColor Green
     Invoke-WebRequest -Uri $zip_url -OutFile $temp_zip -UserAgent $useragent
 
-    # Clean + extract
     if (Test-Path $script:extract_dir) {
         Remove-Item $script:extract_dir -Recurse -Force
     }
 	Expand-Archive -LiteralPath $script:temp_zip -DestinationPath $script:extract_dir -Force
 
-    # Root folder inside zip (GitHub zips always wrap)
 	$script:ReleaseRoot = Get-ChildItem $script:extract_dir -Directory | Select-Object -First 1
-	# Mark latest release as downloaded
 	$script:ReleaseDownloaded = $true
 }
-
-# ---
-# Complete version update
-# ---
 
 function Clean-Downloaded {
 
@@ -411,19 +471,46 @@ function Clean-Downloaded {
 
 function Get-PythonCommand {
 
+    # portable_config\VapourSynth\python.exe is a stripped-down "embeddable"
+    # Python that Get-VapourSynth installs purely for VapourSynth/mpv's own
+    # internal use. It lacks ensurepip/venv, so pip cannot build packages
+    # from source with it (e.g. srt, a subliminal dependency, has no wheel
+    # and fails with "Cannot import 'setuptools.build_meta'" under it).
+    # It must never be picked as the general-purpose interpreter for
+    # Ensure-PythonPackage, no matter how it ends up resolvable on PATH.
+    $vsPythonDir = Join-Path (Get-Location).Path "portable_config\VapourSynth"
+
+    function Test-IsVsPython($path) {
+        if (-not $path) { return $false }
+        return $path.StartsWith($vsPythonDir, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+
     $python = Get-Command python -ErrorAction SilentlyContinue
 
-    if ($python) {
+    if ($python -and -not (Test-IsVsPython $python.Source)) {
         return "python"
     }
 
     $py = Get-Command py -ErrorAction SilentlyContinue
 
-    if ($py) {
+    if ($py -and -not (Test-IsVsPython $py.Source)) {
         return "py"
     }
 
-    throw "Python launcher not found."
+    # PATH may not have refreshed yet in this session (e.g. immediately after
+    # a silent installer run, or a winget-driven PATH change that hasn't
+    # propagated to this process). Fall back to checking the well-known
+    # install locations directly rather than reporting "not found" too early.
+    $candidate = @(
+        (Get-ChildItem "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue),
+        (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue)
+    ) | Where-Object { $_ -and -not (Test-IsVsPython $_.FullName) } | Select-Object -First 1
+
+    if ($candidate) {
+        return $candidate.FullName
+    }
+
+    return $null
 }
 
 function Complete-SelfUpdate {
@@ -592,10 +679,6 @@ function Check-7z {
     }
 }
 
-# Extract an archive.
-#   -Files  : when supplied, extract only those named files (flat, no paths).
-#   -Exclude: shell-style patterns to skip (e.g. "*.bat").
-# When neither flag is given the full archive is extracted preserving paths.
 function Extract-Archive {
     param(
         [string]   $Archive,
@@ -606,28 +689,18 @@ function Extract-Archive {
     Write-Host "Extracting $Archive" -ForegroundColor Green
 
     if ($Files.Count -gt 0) {
-        # 'e' = flat extract (no directory structure), good for pulling specific exes
         & $7z e -y $Archive @Files
     }
     else {
-        # 'x' = extract with full paths; honour any exclusion patterns
         $excludeArgs = $Exclude | ForEach-Object { "-xr!$_" }
         & $7z x -y $Archive @excludeArgs
     }
 }
 
-# ---------------------------------------------------------------------------
-# Download helper
-# ---------------------------------------------------------------------------
-
 function Download-Archive ($filename, $link) {
     Write-Host "Downloading $filename" -ForegroundColor Green
     Invoke-WebRequest -Uri $link -UserAgent $useragent -OutFile $filename
 }
-
-# ---------------------------------------------------------------------------
-# PowerShell version check
-# ---------------------------------------------------------------------------
 
 function Check-PowershellVersion {
     $version = $PSVersionTable.PSVersion.Major
@@ -637,10 +710,6 @@ function Check-PowershellVersion {
         throw
     }
 }
-
-# ---------------------------------------------------------------------------
-# yt-dlp / youtube-dl helpers
-# ---------------------------------------------------------------------------
 
 function Check-Ytplugin {
     $ytdlp     = Get-ChildItem "yt-dlp*.exe" -ErrorAction Ignore
@@ -708,10 +777,6 @@ function Download-Ytplugin ($plugin, $version) {
     }
 }
 
-# ---------------------------------------------------------------------------
-# GitHub release helpers
-# ---------------------------------------------------------------------------
-
 function Get-LatestGithubRelease ($repo) {
     $api  = "https://api.github.com/repos/$repo/releases/latest"
     return Invoke-WebRequest $api -MaximumRedirection 0 -ErrorAction Ignore `
@@ -719,18 +784,11 @@ function Get-LatestGithubRelease ($repo) {
 }
 
 function Get-Latest-Mpv ($Arch) {
-    # shinchiro/mpv-winbuild-cmake is the upstream toolchain author whose builds
-    # zhongfly forks. Using it directly avoids the installer/ folder that zhongfly
-    # bundles in the archive, which was overwriting patched scripts on every update.
     $json  = Get-LatestGithubRelease "shinchiro/mpv-winbuild-cmake"
     $asset = $json.assets | Where-Object { $_.name -match "^mpv-$Arch-[0-9]{8}" } |
              Select-Object -First 1
     return $asset.name, $asset.browser_download_url
 }
-
-# ---------------------------------------------------------------------------
-# Architecture helpers
-# ---------------------------------------------------------------------------
 
 function Get-Arch {
     $FilePath = Join-Path (Get-Location).Path 'mpv.exe'
@@ -753,10 +811,6 @@ function Get-Arch {
     return $result
 }
 
-# ---------------------------------------------------------------------------
-# Version helpers
-# ---------------------------------------------------------------------------
-
 function ExtractGitFromFile {
     $stripped = (& ".\mpv.exe" --no-config 2>&1) | Select-String "mpv" | Select-Object -First 1
     $stripped -match "-g([a-z0-9-]{7})" | Out-Null
@@ -777,10 +831,6 @@ function ExtractDateFromURL ($filename) {
     $filename -match "mpv-[xi864_].*-([0-9]{8})-git-([a-z0-9-]{7})" | Out-Null
     return $matches[1]
 }
-
-# ---------------------------------------------------------------------------
-# Deno runtime helper
-# ---------------------------------------------------------------------------
 
 function Ensure-Deno ([string]$Context = "update") {
     $deno_exe = Join-Path (Get-Location) "deno.exe"
@@ -807,7 +857,6 @@ function Ensure-Deno ([string]$Context = "update") {
         return
     }
 
-    # No local deno.exe present
     if ($Context -ne 'install') { return }
 
     if (-not (Test-Path (Join-Path $env:windir "SysWow64"))) {
@@ -834,19 +883,11 @@ function Ensure-Deno ([string]$Context = "update") {
     Check-Autodelete $archive
 }
 
-# ---------------------------------------------------------------------------
-# Admin check
-# ---------------------------------------------------------------------------
-
 function Test-Admin {
     $user = [Security.Principal.WindowsIdentity]::GetCurrent()
     (New-Object Security.Principal.WindowsPrincipal $user).IsInRole(
         [Security.Principal.WindowsBuiltinRole]::Administrator)
 }
-
-# ---------------------------------------------------------------------------
-# settings.xml helpers
-# ---------------------------------------------------------------------------
 
 function Create-XML {
 @"
@@ -913,16 +954,12 @@ function Check-GetFFmpeg {
     $ffprobe_missing = -not (Test-Path (Join-Path (Get-Location).Path "ffprobe.exe"))
     $either_missing  = $ffmpeg_missing -or $ffprobe_missing
 
-    # Re-ask if unset, or if either binary is missing regardless of saved preference.
-    # This handles settings.xml being copied from another install that had ffmpeg,
-    # or a previous run where the user declined but now ffmpeg/ffprobe aren't present.
     if ($doc.settings.getffmpeg -eq "unset" -or $either_missing) {
         $missing_list = @()
         if ($ffmpeg_missing)  { $missing_list += "ffmpeg.exe"  }
         if ($ffprobe_missing) { $missing_list += "ffprobe.exe" }
         $missing_str = $missing_list -join " and "
         Write-Host "$missing_str not found. " -ForegroundColor Green -NoNewline
-        # Default to Y -- ffmpeg/ffprobe are required for colour detection and thumbnails
         $result = Read-KeyOrTimeout "Proceed with downloading? [Y/n] (default=Y)" "Y"
         Write-Host ""
         $doc.settings.getffmpeg = switch ($result) {
@@ -997,10 +1034,6 @@ function Check-Ytdlp-Channel {
     return $doc.settings.ytdlpchannel
 }
 
-# ---------------------------------------------------------------------------
-# Upgrade functions
-# ---------------------------------------------------------------------------
-
 function Check-Mpv {
     return Test-Path (Join-Path (Get-Location).Path "mpv.exe")
 }
@@ -1050,8 +1083,6 @@ function Upgrade-Mpv {
     if ($need_download) {
         Download-Archive $remoteName $download_link
         Check-7z
-        # Extract all files from the mpv archive except installer bat scripts,
-        # which are bundled in the release but belong only in the installer folder.
         Extract-Archive $remoteName -Exclude @("*.bat", "*.ps1", "doc", "installer")
     }
     if ($remoteName) { Check-Autodelete $remoteName }
@@ -1092,7 +1123,7 @@ function Upgrade-Ytplugin {
             'youtubedl' {
                 Download-Ytplugin "youtube-dl" (Get-Latest-Ytplugin "youtube-dl")
             }
-            'false' { <# user declined #> }
+            'false' { }
             default { Write-Host "Invalid input -- skipping yt-dlp download" -ForegroundColor Yellow }
         }
     }
@@ -1101,9 +1132,6 @@ function Upgrade-Ytplugin {
 function Upgrade-FFmpeg {
     if ((Check-GetFFmpeg) -eq "false") { return }
 
-    # Both ffmpeg and ffprobe are sourced from gyan.dev (CODEX FFMPEG).
-    # The essentials build contains ffmpeg.exe, ffprobe.exe and ffplay.exe.
-    # Version is checked via a single-line API endpoint.
     $ver_url      = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z.ver"
     $archive_url  = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z"
     $archive_name = "ffmpeg-git-essentials.7z"
@@ -1116,7 +1144,6 @@ function Upgrade-FFmpeg {
     $ffprobe_path = Join-Path (Get-Location).Path "ffprobe.exe"
     $need_download = $false
 
-    # Check ffmpeg version
     if (Test-Path $ffmpeg_path) {
         $local_ver = (.\ffmpeg -version | Select-String "ffmpeg version" |
                       Select-Object -First 1).ToString().Trim()
@@ -1133,7 +1160,6 @@ function Upgrade-FFmpeg {
         $need_download = $true
     }
 
-    # Always re-download if ffprobe is missing, even if ffmpeg is current
     if (-not (Test-Path $ffprobe_path)) {
         Write-Host "ffprobe.exe not found -- will download" -ForegroundColor Yellow
         $need_download = $true
@@ -1146,7 +1172,6 @@ function Upgrade-FFmpeg {
         $wc.DownloadFile($archive_url, $archive_path)
         Check-7z
         $7z = Get-7z
-        # Exes are nested inside a versioned subfolder -- use -r to extract flat
         $dest = (Get-Location).Path
         & $7z e -y "-o$dest" $archive_path "ffmpeg.exe" "ffprobe.exe" -r
         if (Test-Path $ffmpeg_path)  { Write-Host "ffmpeg.exe  extracted OK" -ForegroundColor Green }
@@ -1185,8 +1210,6 @@ function Read-KeyOrTimeout ($prompt, $key) {
 }
 
 function Get-VapourSynth {
-    # Only runs on first install — skipped silently if already present.
-    # Installs a self-contained portable VapourSynth into portable_config\VapourSynth.
     $vs_dir      = Join-Path (Get-Location).Path "portable_config\VapourSynth"
     $sentinel    = Join-Path $vs_dir "vapoursynth.dll"
 
@@ -1197,20 +1220,9 @@ function Get-VapourSynth {
 
     Write-Host "VapourSynth not found -- installing." -ForegroundColor Green
 
-    # Fetch latest stable release version from GitHub
-    #$releases = Invoke-WebRequest -Uri "https://api.github.com/repos/vapoursynth/vapoursynth/releases" `
-    #                -UseBasicParsing -UserAgent $useragent | ConvertFrom-Json
     $ver = 73
-    #foreach ($r in $releases) {
-    #    if (-not $r.prerelease) { $ver = $r.name.TrimStart("R"); break }
-    #}
-    #if (-not $ver) {
-    #    Write-Host "Could not determine latest VapourSynth version -- skipping." -ForegroundColor Red
-    #    return
-    #}
     Write-Host "Latest VapourSynth: R$ver" -ForegroundColor Green
 
-    # Determine latest Python 3.14 embed patch version
     $py_major = 3; $py_minor = 14; $py_patch = 0
     for ($i = 1; $i -le 20; $i++) {
         $py_uri = "https://www.python.org/ftp/python/$py_major.$py_minor.$i/python-$py_major.$py_minor.$i-embed-amd64.zip"
@@ -1220,7 +1232,6 @@ function Get-VapourSynth {
         } catch { break }
     }
     if ($py_patch -eq 0) {
-        # Fall back to 3.13 if 3.14 not yet available
         $py_minor = 13; $py_patch = 10
     }
     Write-Host "Using Python $py_major.$py_minor.$py_patch" -ForegroundColor Green
@@ -1253,7 +1264,6 @@ function Get-VapourSynth {
         Write-Host "Extracting Python..." -ForegroundColor Green
         Expand-Archive -LiteralPath $py_zip -DestinationPath $py_tmp -Force
 
-        # Enable site-packages so the VapourSynth wheel installs correctly
         $pth_file = Get-ChildItem $py_tmp -Filter "python$py_major$py_minor._pth" | Select-Object -First 1
         if ($pth_file) {
             Add-Content -Path $pth_file.FullName -Encoding UTF8 -Value "Lib\site-packages"
@@ -1265,7 +1275,6 @@ function Get-VapourSynth {
         Write-Host "Extracting VapourSynth portable..." -ForegroundColor Green
         Expand-Archive -LiteralPath $vs_zip -DestinationPath $vs_tmp -Force
 
-        # Install the VapourSynth Python wheel using the embed Python
         $wheel = Get-ChildItem "$vs_tmp\wheel" -Filter "VapourSynth-*.whl" -ErrorAction Ignore |
                  Select-Object -First 1
         if ($wheel) {
@@ -1277,26 +1286,16 @@ function Get-VapourSynth {
             return
         }
 
-        # Copy only the folders and files we need into portable_config\VapourSynth:
-        #   Lib\           — Python standard library + site-packages (includes vapoursynth module)
-        #   vs-coreplugins\ — built-in VS plugins
-        #   vsgenstubs4\   — type stubs
-        #   Root-level files from the VS zip (vapoursynth.dll, vsscript.dll etc.)
-        #   Root-level files from the Python embed (python.exe, python3xx.dll etc.)
         Write-Host "Copying files to portable_config\VapourSynth..." -ForegroundColor Green
 
-        # Python embed root files
         Get-ChildItem $py_tmp -File | Copy-Item -Destination $vs_dir -Force
-        # Python Lib (includes site-packages with vapoursynth wheel)
         $lib_src = Join-Path $py_tmp "Lib"
         if (Test-Path $lib_src) {
             Copy-Item $lib_src $vs_dir -Recurse -Force
         }
 
-        # VapourSynth root-level DLLs and files (not subdirectories)
         Get-ChildItem $vs_tmp -File | Copy-Item -Destination $vs_dir -Force
 
-        # VapourSynth subdirectories we need
         foreach ($sub in @("vs-coreplugins", "vsgenstubs4")) {
             $src = Join-Path $vs_tmp $sub
             if (Test-Path $src) {
@@ -1359,10 +1358,6 @@ function Get-VSDLLs {
         if (Test-Path $extract_dir)  { Remove-Item -Recurse -Force $extract_dir }
     }
 }
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 if (Test-Admin) {
     Write-Host "Running with administrator privileges" -ForegroundColor Yellow
