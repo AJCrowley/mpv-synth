@@ -223,6 +223,16 @@ If the filmstrip is impacting playback performance during generation, reducing `
 
 ---
 
+## Buy me a coffee
+
+This is a passion project. I wrote it because I wanted a media player for Windows that didn't exist, using IINA on MacOS had spoiled me, and the options on Windows were pretty grim by comparison.
+
+The software is free. It will always be free, and when I have time that I'm not living my life or working on projects that earn revenue, I'll continue to improve it (and always answer your support tickets in the Issues tab in a timely manner). If you enjoy using this player over others and want to say "thank you" or encourage me to invest more time into the project, [buying me a coffee](https://buymeacoffee.com/ajcrowley) would go a long way. I don't expect it, and I didn't write this project to be an earner, but if people support the project, it will let me know that it's making a difference and be a big encouragement. Again, this software will always be free, but if you care to make a donation, it would make more of a difference for me than you may think, I would be extremely grateful.
+
+If you run into a problem or have an idea for something that should be here but isn't, open an issue on GitHub. I keep an eye on it and I take requests seriously.
+
+---
+
 ## Troubleshooting
 
 ### Some videos just show as 50% grey
@@ -263,16 +273,6 @@ Plugins written for this project:
 - **filmstrip.lua** - Filmstrip timeline overlay; composite rendering; resize/fullscreen handling.
 - **icc-detect.lua** - Per-file colour space and HDR detection; automatic player configuration.
 - **auto-subs.lua** - Smarter subtitle track selection. Select a subtitle track under circumstances as specific or as broad as you like. Most useful for auto-enabling `forced` subtitle tracks in multi-lingual video.
-
----
-
-## Buy me a coffee
-
-I want to be straightforward: I did not expect this to take as long as it did. I came back to Windows after a long absence, found the media player situation genuinely disappointing, and decided to fix it. What started as integrating VapourSynth into an existing player base turned into months of debugging Lua timing issues, writing my own plugins from scratch, learning the internals of a rendering pipeline I didn't know existed, and testing across hardware configurations to make sure it worked reliably for people who weren't me.
-
-The software is free. If you find yourself using it and appreciating the difference, [a coffee would mean a lot](https://buymeacoffee.com/ajcrowley). Not required, not expected - but genuinely appreciated, more than you'd think.
-
-If you run into a problem or have an idea for something that should be here but isn't, open an issue on GitHub. I keep an eye on it and I take requests seriously.
 
 ---
 
