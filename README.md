@@ -176,7 +176,7 @@ All shortcuts are visible in the right-click menu next to their corresponding ac
 | `w` / `s` | Previous / next frame (step) |
 | `,` / `.` | Previous / next file in playlist |
 | `[` / `]` | Playback speed -10% / +10% |
-| `{` / `}` | Playback speed -? / 2?? |
+| `{` / `}` | Playback speed half / double |
 | `Backspace` | Reset playback speed |
 | `-` / `=` | Volume down / up |
 | `v` | Toggle subtitle visibility |
@@ -186,6 +186,9 @@ All shortcuts are visible in the right-click menu next to their corresponding ac
 | `M` | Edit player configuration |
 | `U` | Update all components (mpv, ffmpeg, yt-dlp, etc.) |
 | `u` | Update uosc interface theme |
+| `Shift+s` | Browse subtitles from OpenSubtitles.org |
+| `Alt+t` | Auto download best match subtitles from OpenSubs |
+| `v` | Toggle subtitle visibility |
 
 ### Customising shortcuts and the right-click menu
 
