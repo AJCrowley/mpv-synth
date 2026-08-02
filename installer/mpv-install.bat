@@ -187,55 +187,18 @@ call :reg add "HKLM\SOFTWARE\RegisteredApplications" /v "mpv-synth" /d "SOFTWARE
 :: Enable long paths in Windows 10
 call :reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v "LongPathsEnabled" /t REG_DWORD /d 1 /f
 
-:: ---------------------------------------------------------------------------
-:: Install Python 3 (if not already present) and run pip install subliminal
-:: ---------------------------------------------------------------------------
-
-echo.
-echo Checking for Python 3...
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=2" %%V in ('python --version 2^>^&1') do set py_ver=%%V
-    echo Python !py_ver! is already installed. Skipping download.
-    goto :python_ready
-)
-
-echo Python 3 not found. Downloading installer...
-
-:: Fetch the latest Python 3 stable release URL from python.org and download it
-set py_installer=%TEMP%\python3_installer.exe
-where pwsh >nul 2>nul
-if %errorlevel% equ 0 (
-    pwsh -NoProfile -Command ^
-        "$url = ((Invoke-WebRequest -Uri 'https://www.python.org/downloads/windows/' -UseBasicParsing).Links | Where-Object { $_.href -match 'python-3\.[0-9]+\.[0-9]+-amd64\.exe$' } | Select-Object -First 1).href; if (-not $url.StartsWith('http')) { $url = 'https://www.python.org' + $url }; Write-Host \"Downloading $url\"; Invoke-WebRequest -Uri $url -OutFile '%py_installer%'"
-    if errorlevel 1 call :die "Failed to download Python installer"
-) else (
-    powershell -NoProfile -Command ^
-        "$url = ((Invoke-WebRequest -Uri 'https://www.python.org/downloads/windows/' -UseBasicParsing).Links | Where-Object { $_.href -match 'python-3\.[0-9]+\.[0-9]+-amd64\.exe$' } | Select-Object -First 1).href; if (-not $url.StartsWith('http')) { $url = 'https://www.python.org' + $url }; Write-Host \"Downloading $url\"; Invoke-WebRequest -Uri $url -OutFile '%py_installer%'"
-    if errorlevel 1 call :die "Failed to download Python installer"
-)
-
-echo Installing Python 3 (this may take a moment)...
-"%py_installer%" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_launcher=1
-if errorlevel 1 call :die "Python installation failed"
-del /q "%py_installer%" >nul 2>&1
-
-:: Re-read the system and user PATH from the registry so the rest of this
-:: script can find python.exe and pip without needing a new shell session.
-for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "sys_path=%%B"
-for /f "tokens=2*" %%A in ('reg query HKCU\Environment /v Path 2^>nul') do set "usr_path=%%B"
-set "PATH=%sys_path%;%usr_path%"
-echo Python installed and PATH updated for this session.
-
-:python_ready
-echo.
-echo Running: pip install subliminal
-python -m pip install --upgrade pip >nul 2>&1
-python -m pip install subliminal
-if errorlevel 1 call :die "pip install subliminal failed"
-echo subliminal installed successfully.
-echo.
-:: ---------------------------------------------------------------------------
+:: NOTE: Python 3 and the "subliminal" package are installed by updater.ps1
+:: (via updater.bat), which INSTALL.BAT always runs before this script. That
+:: logic is more robust than a duplicate copy here would be -- it verifies
+:: the interpreter it finds is a real system Python rather than the
+:: VapourSynth-embedded copy in portable_config\VapourSynth (which this
+:: script's own PATH change above can make visible to a bare `python`
+:: lookup), it retries with a versioned, collision-free download filename,
+:: and it falls back to a direct python.org download if winget isn't usable.
+:: Keeping a second, weaker copy of this logic here only gave us a second
+:: place for it to fail. If Python/subliminal setup ever needs to happen
+:: from this script specifically, extend updater.ps1's Ensure-PythonInstalled
+:: / Ensure-PythonPackage rather than re-adding a batch equivalent here.
 
 :: Add start menu link
 where pwsh >nul 2>nul
