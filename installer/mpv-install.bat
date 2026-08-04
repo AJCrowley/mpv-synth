@@ -187,19 +187,6 @@ call :reg add "HKLM\SOFTWARE\RegisteredApplications" /v "mpv-synth" /d "SOFTWARE
 :: Enable long paths in Windows 10
 call :reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v "LongPathsEnabled" /t REG_DWORD /d 1 /f
 
-:: NOTE: Python 3 and the "subliminal" package are installed by updater.ps1
-:: (via updater.bat), which INSTALL.BAT always runs before this script. That
-:: logic is more robust than a duplicate copy here would be -- it verifies
-:: the interpreter it finds is a real system Python rather than the
-:: VapourSynth-embedded copy in portable_config\VapourSynth (which this
-:: script's own PATH change above can make visible to a bare `python`
-:: lookup), it retries with a versioned, collision-free download filename,
-:: and it falls back to a direct python.org download if winget isn't usable.
-:: Keeping a second, weaker copy of this logic here only gave us a second
-:: place for it to fail. If Python/subliminal setup ever needs to happen
-:: from this script specifically, extend updater.ps1's Ensure-PythonInstalled
-:: / Ensure-PythonPackage rather than re-adding a batch equivalent here.
-
 :: Add start menu link
 where pwsh >nul 2>nul
 if %errorlevel% equ 0 (
