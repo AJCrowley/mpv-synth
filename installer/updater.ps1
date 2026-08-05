@@ -2,7 +2,7 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
-$UpdaterVersion = [version]"1.1.4"
+$UpdaterVersion = [version]"1.1.5"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
@@ -135,6 +135,13 @@ Thanks for using mpv-synth!
 "@
         }
     }
+    @{
+        Version = [version]"1.1.5"
+        Script = {
+            Upgrade-mpv-Files-115
+        }
+    }
+
 )
 
 # ---
@@ -419,6 +426,45 @@ function Upgrade-mpv-Files-114 {
         }
 
         Write-Host "Copying thumbfast.lua..." -ForegroundColor Green
+
+        $targetDir = Split-Path $target -Parent
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+
+        Copy-Item -Path $source -Destination $target -Force
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+function Upgrade-mpv-Files-115 {
+
+    Write-Host "Updating OpenSubs..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+
+        $source = Join-Path $root.FullName "portable_config\scripts\opensubs.lua"
+        $target = Join-Path $destination "portable_config\scripts\opensubs.lua"
+        $source = Join-Path $root.FullName "portable_config\helpers\opensubs_helper.py"
+        $target = Join-Path $destination "portable_config\helpers\opensubs_helper.py"
+        $source = Join-Path $root.FullName "portable_config\input.conf"
+        $target = Join-Path $destination "portable_config\input.conf"
+
+        if (-not (Test-Path $source)) {
+            throw "Files not found at $source"
+        }
+
+        Write-Host "Copying opensubs files..." -ForegroundColor Green
 
         $targetDir = Split-Path $target -Parent
         if (-not (Test-Path $targetDir)) {
@@ -1381,7 +1427,14 @@ try {
     Get-VSDLLs
     Upgrade-Ytplugin
     Upgrade-FFmpeg
-	Invoke-Migrations
+	if ($Installing) {
+		Write-Host ""
+		Write-Host "Fresh install detected -- skipping migration scripts." -ForegroundColor Green
+		Set-InstalledVersion $UpdaterVersion
+	}
+	else {
+		Invoke-Migrations
+	}
 
 	Complete-SelfUpdate
 
