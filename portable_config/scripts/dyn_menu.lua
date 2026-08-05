@@ -574,7 +574,7 @@ local function parse_input_conf(conf)
         if c and (not o.uosc_syntax) then return end
         local key, cmd = line:match('%s*([%S]+)%s+(.-)%s*$')
         if key and key:match('^#%S+') then return end
-        return ((o.uosc_syntax and c) and '' or key), cmd
+        return ((o.uosc_syntax and c) and '' or key), cmd:gsub("&", "&&")
     end
 
     local function extract_title(cmd)
