@@ -147,7 +147,95 @@ Thanks for using mpv-synth!
 # ---
 # Version update specific functions
 # ---
+function Upgrade-Python {
 
+    Write-Host ""
+    Write-Host "Checking Python..."
+
+    $pycmd = Get-PythonCommand
+
+    # Install Python if missing
+    if (-not $pycmd) {
+        Ensure-PythonInstalled
+        $pycmd = Get-PythonCommand
+    }
+
+    #
+    # Upgrade Python itself
+    #
+
+    $installedVersion = [version]((& $pycmd --version 2>&1) -replace '[^\d.]','')
+
+    $latestUrl, $latestVersion = Get-LatestPythonInstaller
+    $latestVersion = [version]$latestVersion
+
+    if ($latestVersion -gt $installedVersion) {
+
+        Write-Host "Upgrading Python $installedVersion -> $latestVersion" -ForegroundColor Green
+
+        $installer = Join-Path $env:TEMP "python-$latestVersion-amd64.exe"
+
+        Invoke-WebRequest `
+            -Uri $latestUrl `
+            -OutFile $installer `
+            -UserAgent $useragent
+
+        $proc = Start-Process -FilePath $installer -ArgumentList @(
+            "/quiet",
+            "InstallAllUsers=1",
+            "PrependPath=1",
+            "Include_launcher=1",
+            "Include_test=0"
+        ) -Wait -PassThru
+
+        if ($proc.ExitCode -ne 0) {
+            throw "Python installer exited with code $($proc.ExitCode)"
+        }
+
+        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
+        Refresh-EnvironmentPath
+
+        $pycmd = Get-PythonCommand
+
+        if (-not $pycmd) {
+            throw "Python could not be located after upgrade."
+        }
+
+        $installedVersion = [version]((& $pycmd --version 2>&1) -replace '[^\d.]','')
+
+        if ($installedVersion -lt $latestVersion) {
+            throw "Python upgrade appears to have failed."
+        }
+    }
+    else {
+        Write-Host "Python is already up to date." -ForegroundColor Green
+    }
+
+    #
+    # Upgrade pip
+    #
+
+    Write-Host "Upgrading pip..." -ForegroundColor Green
+    & $pycmd -m pip install --upgrade pip
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to upgrade pip"
+    }
+
+    #
+    # Upgrade subliminal
+    #
+
+    Write-Host "Upgrading subliminal..." -ForegroundColor Green
+    & $pycmd -m pip install --upgrade subliminal
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to upgrade subliminal"
+    }
+
+    Write-Host "Python environment updated." -ForegroundColor Green
+}
 function Ensure-PythonInstalled {
 
     Write-Host ""
@@ -249,28 +337,32 @@ function Ensure-PythonInstalled {
 }
 
 function Get-LatestPythonInstaller {
-    # Discover the latest available 3.13.x patch release by probing python.org
-    # directly (same pattern already used elsewhere in this script for the
-    # VapourSynth embeddable build), then return the download URL + version.
-    $py_major = 3; $py_minor = 13; $py_patch = 0
 
-    for ($i = 0; $i -le 20; $i++) {
-        $py_uri = "https://www.python.org/ftp/python/$py_major.$py_minor.$i/python-$py_major.$py_minor.$i-amd64.exe"
-        try {
-            Invoke-WebRequest -Uri $py_uri -Method Head -UseBasicParsing -UserAgent $useragent | Out-Null
-            $py_patch = $i
-        } catch { break }
+    # Discover the latest available Python 3.x release by probing python.org.
+
+    for ($minor = 40; $minor -ge 10; $minor--) {
+
+        for ($patch = 20; $patch -ge 0; $patch--) {
+
+            $version = "3.$minor.$patch"
+            $url = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
+
+            try {
+                Invoke-WebRequest `
+                    -Uri $url `
+                    -Method Head `
+                    -UseBasicParsing `
+                    -UserAgent $useragent | Out-Null
+
+                return $url, $version
+            }
+            catch {
+                # Version doesn't exist, try the next one.
+            }
+        }
     }
 
-    if ($py_patch -eq 0) {
-        # Known-good fallback build in case the probe above fails entirely
-        # (e.g. transient network issue).
-        $py_patch = 7
-    }
-
-    $version = "$py_major.$py_minor.$py_patch"
-    $url = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
-    return $url, $version
+    throw "Unable to determine the latest Python release."
 }
 
 function Install-PythonDirect {
@@ -337,6 +429,10 @@ function Ensure-PythonPackage {
     Write-Host "Installing $PackageName..."
 
     & $pycmd -m pip install --upgrade pip
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to upgrade pip"
+    }
 
     & $pycmd -m pip install $PackageName
 
@@ -453,18 +549,32 @@ function Upgrade-mpv-Files-115 {
         $root = $script:ReleaseRoot
         $destination = (Get-Location).Path
 
-        $source = Join-Path $root.FullName "portable_config\scripts\opensubs.lua"
-        $target = Join-Path $destination "portable_config\scripts\opensubs.lua"
-        $source = Join-Path $root.FullName "portable_config\helpers\opensubs_helper.py"
-        $target = Join-Path $destination "portable_config\helpers\opensubs_helper.py"
-        $source = Join-Path $root.FullName "portable_config\input.conf"
-        $target = Join-Path $destination "portable_config\input.conf"
+        $files = @(
+            "portable_config\scripts\opensubs.lua",
+            "portable_config\script-opts\opensubs.conf",
+            "portable_config\helpers\opensubs_helper.py",
+            "portable_config\helpers\fix_opensubs.ps1",
+            "portable_config\input.conf"
+        )
+
+        foreach ($file in $files) {
+
+            $source = Join-Path $root.FullName $file
+            $target = Join-Path $destination $file
+
+            $targetDir = Split-Path $target -Parent
+            if (-not (Test-Path $targetDir)) {
+                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            }
+
+            Copy-Item $source $target -Force
+        }
 
         if (-not (Test-Path $source)) {
             throw "Files not found at $source"
         }
 
-        Write-Host "Copying opensubs files..." -ForegroundColor Green
+        Write-Host "Copying updated files..." -ForegroundColor Green
 
         $targetDir = Split-Path $target -Parent
         if (-not (Test-Path $targetDir)) {
@@ -1427,6 +1537,7 @@ try {
     Get-VSDLLs
     Upgrade-Ytplugin
     Upgrade-FFmpeg
+    Upgrade-Python
 	if ($Installing) {
 		Write-Host ""
 		Write-Host "Fresh install detected -- skipping migration scripts." -ForegroundColor Green
