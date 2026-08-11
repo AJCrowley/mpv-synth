@@ -1,118 +1,55 @@
 # mpv-synth
-### An mpv-based media player for Windows built for the way people actually watch things
+### A media player for Windows built for how people actually watch things
 
 Official website: https://mpvsynth.app
 
-**Tired of broken mpv setups, outdated players, and endless config tweaking?**
+mpv-synth is a Windows media player built on mpv, with frame interpolation, automatic HDR colour management, a filmstrip timeline, OpenSubtitles integration, and one-click browser streaming. Free and open source.
 
-mpv-synth gives you a fully working, self-updating mpv-based media player with modern features - out of the box.
-
-No setup headaches. No maintenance. Just press play.
-
-![mpv-synth](screenshot.png)
+![mpv-synth](screenshot-opensubs.png)
 
 ---
 
-## The problem with Windows media players
+## The problem
 
-Windows has never had a truly great built-in media player, and the third-party ecosystem hasn't kept pace with how people actually consume media in 2026. The most popular options are functional but feel like they were designed a decade ago - and in most cases, they were. Clunky interfaces assembled from stock Windows form components. Windows that linger on your desktop doing nothing after playback ends. No memory of where you were in a file. No awareness that you might want to move on to the next episode without hunting through a file browser. No consideration of the display you're watching on, the colour space of the content, or whether the motion might benefit from interpolation.
+Windows has never had a great media player. The third-party ecosystem hasn't kept pace with how people watch things now. The most popular options work, but they feel like they were designed a decade ago, because they were.
 
-Contrast that with how media playback works on your phone. You open a file - it plays. When it's done, it's done. It remembers your position. It just gets out of the way. There's no application to wrangle. It feels like a feature of the operating system rather than a third-party tool bolted on top of it.
+Clunky interfaces assembled from stock Windows form components. Windows that sit on your desktop doing nothing after playback ends. No memory of where you were in a file. No awareness that you might want to move on to the next episode automatically. No consideration of the display you're watching on, the colour space of the content, or whether the motion could benefit from interpolation.
 
-That's the experience mpv-synth is built to deliver on Windows.
+Compare it to your phone. You open a file and it plays. When it's done, it's done. It gets out of the way. There's no application to wrangle. It feels like a feature that should be part of any modern operating system.
 
----
-
-## What mpv-synth is
-
-**mpv-synth turns video playback into a native OS-level experience.**
-
-Open a file - it plays - it closes when done.
-
-No UI clutter. No library management. No friction.
+That's the experience mpv-synth delivers on Windows. Open a video file and it plays, full stop. No splash screens, no library to build, no window hanging around after playback ends. When there are no more videos to watch in a folder, the player closes itself. It knows its job is done.
 
 ---
 
-## What you get
+## Features
 
-- Works instantly - no manual setup
-- Automatically updates mpv, scripts, and tools
-- Seamless episode playback (auto-next)
-- Remembers where you left off
-- Advanced video features (HDR, interpolation) - optional
-- Filmstrip timeline with previews
-- Stream videos directly from your browser
+**Frame Interpolation** — Full VapourSynth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
 
----
+**Automatic Colour Management** — The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time.
 
-## Zero maintenance
+**Filmstrip Timeline** — 150 evenly-spaced thumbnail slices by default, have as many or as few as you like to achieve your best look, composited into the seekbar, giving you a visual map of the entire file. Hover for a frame-accurate preview. Jump to any scene with a click.
 
-mpv-synth keeps itself up to date.
+**Auto-advance & Resume** — When a video ends, mpv-synth moves to the next file in the folder automatically → when you quit mid-file, it resumes exactly where you stopped. No manual bookmarking required.
 
-Press `U` at any time and it updates:
-- mpv
-- ffmpeg
-- yt-dlp
-- scripts and plugins
+**Smart Subtitle Selection** — The auto-subs plugin activates a subtitle track only when it matches every term in a configurable list → `match=en,forced` picks up English (Forced) automatically, while leaving everything else untouched. Fine-grained, or one-word simple.
 
-No manual downloads. No version mismatches. No breakage.
+**OpenSubtitles Integration** — The opensubs plugin searches and downloads subtitles from OpenSubtitles and other providers directly from the right-click menu. Manual search, best-match download, or browse results, all without leaving the player. Supports login credentials for premium providers.
+
+**Simplified On-Screen Controls** — The osc-simplified plugin replaces mpv's default OSC with a clean, minimal control bar. Configurable skip buttons (left, right, middle click, each with its own seek duration), dark and light modes, and rounded corners. No clutter.
+
+**Dynamic Right-Click Menu** — The dyn_menu plugin builds a native Windows context menu from your input.conf bindings. Every shortcut you define appears in the menu automatically, organized by the menu path you specify. No separate menu config to maintain. Modified from the original mpv-menu-plugin for reliability.
+
+**Self-updating** — Press `U` from within the player to pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and the updater itself. The entire toolchain stays current with a single keypress, or run `updater.bat` directly without opening the player.
 
 ---
 
-## Who this is for
+## Quick Start
 
-- You use mpv but hate maintaining it
-- You want a clean, minimal playback experience
-- You watch series and want seamless episode playback
-- You want advanced features without manual setup
-
----
-
-## Quick Start (30 seconds)
-
-1. Download and extract the latest release into your Program Files
-2. Run `INSTALL.BAT`
-3. Double-click any video
+1. Download and extract the latest release. `C:\Program Files\` is the recommended location.
+2. Run `INSTALL.BAT` (right-click and Run as Administrator on Windows 10).
+3. Double-click any video.
 
 Done.
-
----
-
-## What mpv-synth does differently
-
-**It behaves like a native OS feature, not an app.** Open a video file and it plays - full stop. No splash screens, no library to build, no window hanging around after playback ends. When there are no more videos to watch in a folder, the player closes itself. It knows its job is done.
-
-**It remembers where you are.** Close a file mid-way through and pick it up later - it resumes exactly where you left off, automatically.
-
-**It auto-advances through episodes.** When one video ends, mpv-synth moves to the next file in the folder. Binge a season without touching anything except the occasional skip when you don't feel like watching the credits roll.
-
-**It manages colour automatically.** The bundled ICC-detect plugin reads the colour space and HDR metadata of every file you open, and configures the player accordingly without any manual input. HDR content is passed through natively on capable displays and tone-mapped correctly on SDR displays. You get the right picture for your setup, automatically, on every file.
-
-**It interpolates frames.** Via a full VapourSynth pipeline, mpv-synth can smoothly interpolate any video up to 30, 60, 90, 120, or 144fps - switchable from the right-click menu or with a keypress. The effect is colloquially known as the "soap opera effect", and it's entirely optional. If you've never seen it done well, give it a shot. A lot of people who claim to hate it change their minds fairly quickly once they've had some time with it.
-
-**It has a filmstrip timeline.** The seekbar is populated with 150 evenly-spaced thumbnail slices of the video, giving you an at-a-glance map of the entire file. Hover over any point and a frame-accurate preview thumbnail appears. Jump directly to any scene with a single click.
-
-**It has smart subtitle detection.** Subtitle auto selection as broad or as narrow as you prefer. Have it always select the subtitle track of your native tongue, or refine the criteria so that subtitles are only loaded in multi-lingual videos (indicated by "Forced" subtitle track).
-
-**It streams from the web.** mpv-synth includes browser extensions for Chrome-family browsers and Firefox that add a "Play in mpv-synth" option to your right-click menu on any link to a page with video or currently open page with a video. One click routes the stream through the player, bypassing browser-based playback entirely.
-
-**It updates itself.** Press `U` from within the player (or run `updater.bat`) and mpv-synth will pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and associated tools. Keeping everything current is a single keypress.
-
----
-
-## Feature overview
-
-| Feature | Details |
-|---|---|
-| Frame interpolation | VapourSynth presets at 30/60/90/120/144fps, fully customisable |
-| Automatic colour management | ICC-detect reads per-file colour space and HDR metadata; native HDR passthrough on capable displays |
-| Filmstrip timeline | 150 thumbnail slices composited into the seekbar; slide-from-bottom animation |
-| Hover thumbnails | Frame-accurate preview on timeline hover via thumbfast, with stall watchdog for reliability |
-| Auto-advance | Automatically plays next file in folder when playback ends |
-| Resume playback | Position saved on exit, restored on next open |
-| Browser streaming | Chrome/Edge/Brave/Vivaldi and Firefox extensions; right-click any video link to play in mpv-synth |
-| Self-updating | Single keypress or script updates mpv, ffmpeg, yt-dlp, and tooling |
-| Fully configurable | Right-click menu, keyboard shortcuts, and all plugin options are editable via plain text config files |
 
 ---
 
@@ -120,162 +57,147 @@ Done.
 
 ### mpv-synth
 
-1. Download and extract the zip (or clone the repo) to your chosen location - `C:\Program Files\mpv-synth` is recommended.
+1. Download the zip and extract it where you want the installation to live. `C:\Program Files\` is the recommended location.
 
-2. Run `INSTALL.BAT`. This single script handles everything: it downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, VapourSynth, and the required interfacing libraries; registers file associations; creates Start Menu and AutoPlay entries; and then removes itself. **The install is interactive** - read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your computer is more than roughly a decade old, choose option 2 (`x86_64`) at the first prompt rather than the default option 1 (`x86_64-v3`). Any modern machine should handle `x86_64-v3` without issue.
+2. Run `INSTALL.BAT`. This single script downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, and VapourSynth\*; registers file associations; creates Start Menu and AutoPlay entries; then removes itself. **The install is interactive**. Read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your machine is more than roughly a decade old, choose `x86_64` at the first prompt rather than the default `x86_64-v3`. Any modern hardware should handle v3 fine.
 
-3. The system is set for English by default. If this is not your first language, edit the `portable_config\mpv.conf` file and set your language codes in the `alang` parameter for audio, and `slang` for subtitles. If you want subtitles to be on by default, you can either set `sid=yes` in mpv.conf, or if you want more advanced pattern matching, go into `script-opts\auto-sub.conf` and add your terms to the `match` parameter. A subtitle track will only be automatically activated if it matches every item in this comma separated list (no spaces), so the default `match=en,forced` will select the first subtitle track that matches both of those (could be "English (Forced)" or "Forced French", as both "en" and "forced" are matched to those strings), usually being something along the lines of `English (Forced)`. This increased granularity is useful if you don't normally use subtitles, but want them to activate automatically in certain scenarios (such as multi-lingual video). You can have only a single value if you just want it to select your value, or build a complex filter that only turns on very specific subtitles. If you just want mpv to select your subtitles without the use of this plugin, set `enabled=no` in `script-opts\auto-subs.conf`.
+3. Set your language (optional, English by default). Open `portable_config\mpv.conf` and set your preferred language codes:
+   ```
+   alang=ja,jpn,en
+   slang=en,eng
+   ```
+   For subtitles to activate automatically, edit `portable_config\script-opts\auto-subs.conf` and set your match terms. A track is only selected if it matches every term in the list, so you can be as broad or as specific as you like:
+   ```
+   match=en,forced
+   ```
+   The `match` list is comma-separated with no spaces. Each entry must appear somewhere in the subtitle track's name or language tag for it to be selected. The default `match=en,forced` targets tracks labelled something like English (Forced).
 
-4. After installation, double-click any video file. If Windows asks which app to use, select mpv-synth and tick "Always" - you shouldn't need to do this more than once per file type.
+4. Double-click a video. mpv-synth registers itself as the default handler for common video formats. If Windows asks which app to use, select mpv-synth and tick "Always".
 
-That's it. The `INSTALL.BAT` script deletes itself after a successful run. Everything from that point forward is handled by the built-in updater.
-
-**If you need to change the build architecture after install**, open `settings.xml` in the install root and set `<arch>x86_64-v3</arch>` or `<arch>x86_64</arch>`. The next time the updater runs (or you press `U` in the player), it will switch to the selected build. Deleting `mpv.exe` forces an immediate download on next updater run.
-
-**If performance is an issue**, open `portable_config\mpv.conf` and read the comments around the `QUALITY PROFILE` and `PERFORMANCE PROFILE` blocks. Starting with `vo=gpu` and `gpu-context=d3d11` under the Performance Profile will make the biggest difference. mpv is extremely lightweight at its core - any machine that can run Windows 11 should be able to run mpv-synth smoothly. The quality settings are there if you want them, not because the player requires them.
+\* VapourSynth have released R74, which is not yet compatible, so R73 will be used until such time as that changes.
 
 ### Browser extensions
 
-The browser extensions are entirely optional - mpv-synth works perfectly as a local mpv-based media player without them.
+The browser extensions are completely optional. mpv-synth works perfectly as a local player without them. They add a "Play in mpv-synth" right-click option to any page with embedded video in Chrome-family browsers and Firefox.
 
-To install:
+1. Extract `installer\mpv-synth-extension.zip` in place. Then, inside the `native\` folder, right-click `install.bat` and choose "Run as Administrator". This registers the Python host that allows the browser to securely launch mpv. You only need to do this once. **Prerequisite:** Python 3 must be installed and on your PATH.
 
-1. Extract `installer\mpv-synth-extension.zip` in place.
-2. Follow the instructions in the `README.md` inside the extracted `mpv-synth-extension` folder. Installation takes under a minute and the instructions are clear.
+2. Load the extension in your browser. **Chrome / Edge / Brave / Vivaldi:** Go to `chrome://extensions`, enable Developer Mode, click "Load unpacked", and select the `chrome\` folder. **Firefox:** Go to `about:debugging#/runtime/this-firefox`, click "Load Temporary Add-on...", navigate to the `firefox\` folder, and select `manifest.json`.
 
-Extensions are included for Chrome, Edge, Brave, Vivaldi, and Firefox. The Chrome and Firefox extensions share the vast majority of their code - the separation exists only because of Firefox's different extension architecture.
+3. Click the mpv-synth icon in your toolbar. Fill in the mpv Location (the folder containing `mpv.exe`) and Config Location. If you installed to the default location, you can leave the pre-filled placeholders as-is. Click Save.
 
-Once installed, right-clicking any link to a page with embedded video will show a "Play link in mpv-synth" option. Click it, and the stream routes to the player. Right clicking an empty space on a page containing a video with show a "Play page in mpv-synth" option. Click it, and again the stream routes to the player.
-
-> Note: Extensions are currently distributed for developer-mode installation rather than through the Chrome Web Store or Firefox Add-Ons. This sounds more complicated than it is - the README inside the extension zip walks through it step by step, and it takes less than a minute. If demand warrants it, I'll pursue formal store publication.
+Extensions are currently distributed for developer-mode installation rather than through browser extension stores. This sounds more technical than it is. The walkthrough above covers everything, and it takes under a minute.
 
 ---
 
 ## Usage
 
-**For most things, just double-click a video.** mpv-synth registers itself as the default handler for common video formats during installation. If a file opens in something else, right-click it - Open with - Choose another app - mpv-synth, ticking "Always". If mpv-synth doesn't appear in the list, choose "Choose an app on your PC" and browse to `mpv.exe` in your install directory.
-
-When you open a file, mpv-synth automatically builds a playlist from all videos in the same folder, ordered by filename. Once the filmstrip has generated (a few seconds on first load), the seekbar will be filled with thumbnail slices of the video. Hover over the seekbar for a frame-accurate preview at any point.
-
-**Frame interpolation** is off by default. Enable it from the right-click menu under VapourSynth, or with the keyboard shortcuts listed below. Try 60fps first. It may take a moment to activate as VapourSynth initialises.
-
-All plugin and player options are in `portable_config\script-opts\` - one `.conf` file per plugin, named accordingly.
-
-### Keyboard shortcuts
-
-All shortcuts are visible in the right-click menu next to their corresponding action. These are the ones you'll reach for most often:
+All actions are available in the right-click menu with keyboard shortcuts displayed alongside them. Here are the ones you'll reach for most often:
 
 | Key | Action |
 |---|---|
 | `Escape` | Toggle fullscreen |
-| `Space` | Play / pause |
-| `q` | Quit (position is saved automatically) |
-| `-` / `-` | Seek 5 seconds; hold `Ctrl` for 5 minutes |
-| `-` / `-` | Seek 30 seconds forward / back |
+| `Space` | Play / Pause |
+| `q` | Quit → position saved automatically |
+| `←` / `→` | Seek 5 seconds; hold `Ctrl` for 5 minutes |
+| `↑` / `↓` | Seek 30 seconds forward / back |
 | `a` / `d` | Previous / next chapter |
-| `w` / `s` | Previous / next frame (step) |
-| `,` / `.` | Previous / next file in playlist |
-| `[` / `]` | Playback speed -10% / +10% |
-| `{` / `}` | Playback speed half / double |
+| `w` / `s` | Step one frame forward / back |
+| `,` / `.` | Previous / next file in folder |
+| `[` / `]` | Playback speed −10% / +10% |
+| `{` / `}` | Playback speed ½× / 2× |
 | `Backspace` | Reset playback speed |
 | `-` / `=` | Volume down / up |
 | `v` | Toggle subtitle visibility |
 | `Ctrl+v` | Cycle subtitle tracks |
-| `Ctrl+p` | Quick menu |
-| `I` | Edit input bindings and menu |
-| `M` | Edit player configuration |
-| `U` | Update all components (mpv, ffmpeg, yt-dlp, etc.) |
-| `u` | Update uosc interface theme |
-| `Shift+s` | Browse subtitles from OpenSubtitles.org |
-| `Alt+t` | Auto download best match subtitles from OpenSubs |
-| `v` | Toggle subtitle visibility |
+| `Shift+s` | Browse OpenSubtitles |
+| `Alt+t` | Download best-match subtitles from OpenSubtitles |
+| `Alt+s` | Manual OpenSubtitles search |
+| `Ctrl+i` | Toggle automatic ICC profile detection |
+| `Alt+` | VapourSynth off |
+| `Alt+5` | VapourSynth 60fps |
+| `Alt+8` | VapourSynth 120fps |
+| `I` | Edit keyboard bindings & menu |
+| `E` | Edit player configuration |
+| `U` | Update all components (mpv, ffmpeg, yt-dlp…) |
+| `t` | Toggle statistics overlay |
 
 ### Customising shortcuts and the right-click menu
 
-Everything is configured in `portable_config\input.conf`. Each line follows the pattern:
+All shortcuts and right-click menu entries are defined in `portable_config\input.conf`. Each line follows this pattern:
 
 ```
 [key]    [action]    #menu: Top Level > Submenu > Item name
 ```
 
 For example:
-
 ```
 Right    seek 60    #menu: Navigate > Skip > 1 min forward
 ```
 
-This binds the right arrow key to skip 60 seconds, and places it in the menu at Navigate - Skip - 1 min forward. The `#menu:` portion is optional - omit it if you want the binding without a menu entry. Use `_` as the key if you want a menu entry with no keyboard shortcut. Nesting depth is unlimited: each `>` adds a submenu level.
+The `#menu:` portion is optional → omit it for a binding with no menu entry. Use `_` as the key for a menu entry with no keyboard shortcut. Each `>` adds a submenu level. Open the file via Tools → Edit Config in the right-click menu, or press `I`.
 
-The layout becomes obvious within a few minutes of looking at the file. You can also open it directly from within the player via Tools - Edit Config in the right-click menu, or by pressing `I`.
+All plugin options live in `portable_config\script-opts\`, one `.conf` file per plugin, named accordingly. The main player options are in `portable_config\mpv.conf`. Each setting includes a comment describing what it does and its type, so you can edit them in any text editor. Every plugin written for mpv-synth can be disabled with `enabled=no` at the top of its conf file.
 
----
+### Filmstrip settings
 
-## Filmstrip and thumbnail settings
-
-The filmstrip defaults to **150 thumbnails** generated across **4 concurrent threads**. This gives a dense, visually useful timeline and works smoothly on modest hardware - tested on a 65W Ryzen 7 mini-PC. Both values are configurable in `portable_config\script-opts\filmstrip.conf`:
+The filmstrip defaults to 150 thumbnails generated across 4 concurrent threads. This gives a dense, visually rich timeline and runs smoothly on modest hardware, tested on a 65W Ryzen 7 mini-PC.
 
 ```ini
+# portable_config\script-opts\filmstrip.conf
 thumbnail_count=150
 max_concurrent=4
 ```
 
-If the filmstrip is impacting playback performance during generation, reducing `max_concurrent` to 2 (or even 1) will slow thumbnail generation but eliminate any playback impact. Reducing `thumbnail_count` to 100 still looks good and generates faster. Set `thumbnail_count=0` (or `enabled=no`) to disable the filmstrip entirely.
-
----
-
-## Buy me a coffee
-
-This is a passion project. I wrote it because I wanted a media player for Windows that didn't exist, using IINA on MacOS had spoiled me, and the options on Windows were pretty grim by comparison.
-
-The software is free. It will always be free, and when I have time that I'm not living my life or working on projects that earn revenue, I'll continue to improve it (and always answer your support tickets in the Issues tab in a timely manner). If you enjoy using this player over others and want to say "thank you" or encourage me to invest more time into the project, [buying me a coffee](https://buymeacoffee.com/ajcrowley) would go a long way. I don't expect it, and I didn't write this project to be an earner, but if people support the project, it will let me know that it's making a difference and be a big encouragement. Again, this software will always be free, but if you care to make a donation, it would make more of a difference for me than you may think, I would be extremely grateful.
-
-If you run into a problem or have an idea for something that should be here but isn't, open an issue on GitHub. I keep an eye on it and I take requests seriously.
-
----
-
-## Troubleshooting
-
-### Some videos just show as 50% grey
-
-Some monitors have difficulty tone mapping bt.709 colour profile. To disable automatic switching to this icc colour profile, just edit the file ```portable_config\script-opts\icc-detect.conf``` and remove the ```#``` at the start of the line ```icc_for_sdr=no```. This will prevent auto switching to this colour profile, or more immediately, just press ```Ctrl+i```.
-
-### Any other issues
-
-Just go to https://github.com/AJCrowley/mpv-synth/issues and create a ticket. I do my best to actively maitain this project, and if you are experiencing a bug I will do my best to resolve the issue as quickly as possible. I do my best to fix any issues as soon as I'm aware of them, and the best way to make me aware is to post an issue on the GitHub.
-
----
-
-## Removing mpv-synth
-
-If you've tried it out and decided that this isn't the media player for you, that's fine, and I thank you for giving it a shot. If you're encountering a specific issue I'd ask that regardless of whether you uninstall or keep mpv-synth that you make a post on the "Issues" page of the Github project, describing your issue in as much detail as possible, so that I can work on addressing it and continually improving the player.
-
-To uninstall, simply run the ```installer\mpv-uninstall.bat``` script. Now all files and registry entries created in the installation of mpv-synth are removed, and you can safely delete all of the files. If you accidentally deleted all of the files without running the uninstall script and are experiencing remnants of the installation, don't worry, you don't need to re-download the whole program, you can just grab the ```mpv-uninstall.bat``` script from the project's Github page and run it in isolation, it doesn't depend on any of the other files in the package, so it will clean up and remnants of your install.
+If generation impacts playback, reduce `max_concurrent` to 2 or 1 → thumbnails will build more slowly, but playback won't be affected. `thumbnail_count=100` still looks great.
 
 ---
 
 ## Acknowledgements
 
-mpv-synth is built on the work of a lot of talented people. Several of the bundled components are used in modified form - patched for reliability, compatibility with this specific setup, or to resolve issues that appeared during testing.
+mpv-synth is built on the work of a lot of talented people. Several plugins were written from scratch for this project. Others are bundled from open source projects, some modified for reliability or to resolve issues found during testing.
 
-- **[mpv](https://github.com/mpv-player/mpv)** - the player at the core of everything. Extremely capable, extraordinarily extensible.
-- **[mpv-hero](https://github.com/stax76/mpv-hero/)** - the starting point and inspiration for this project.
-- **[VapourSynth](https://github.com/vapoursynth/vapoursynth)** - the frame processing framework powering interpolation.
-- **[uosc](https://github.com/tomasklaen/uosc)** - the interface layer. The de facto standard for mpv UI.
-- **[mpv-menu-plugin](https://github.com/tsl0922/mpv-menu-plugin)** - native Windows right-click menu integration (modified).
-- **[thumbfast](https://github.com/po5/thumbfast)** - timeline hover thumbnails (modified; stall watchdog added).
-- **[open-file-dialog](https://github.com/rossy/mpv-open-file-dialog)** - native Windows file/folder open dialog.
-- **[recent-menu](https://github.com/natural-harmonia-gropius/recent-menu)** - recently played files.
-- **[bjaan](https://github.com/bjaan/)** - libraries for VapourSynth integration.
+**Core:**
+- [mpv](https://github.com/mpv-player/mpv) — the player at the core of everything. Extraordinarily capable, extraordinarily extensible.
+- [mpv-hero](https://github.com/stax76/mpv-hero/) — the starting point and inspiration for this project.
 
-Plugins written for this project:
+**Original plugins (written for mpv-synth):**
+- **auto-subs** — automatic subtitle selection based on configurable match terms.
+- **opensubs** — OpenSubtitles search and download directly from the player. Supports multiple providers with optional login credentials.
+- **filmstrip** — filmstrip timeline with configurable generation and animation.
+- **icc-detect** — automatic ICC profile and HDR detection. Tone-maps HDR content on SDR displays using configurable algorithms.
+- **osc-simplified** — minimal on-screen control bar with configurable skip buttons, dark/light modes, and rounded corners.
+- **vapoursynth** — frame interpolation integration. VapourSynth filter management with configurable FPS presets and auto-apply rules.
+- **open-file-dialog** — native Windows file/folder open dialog integration.
 
-- **vapoursynth.lua + vapoursynth.vpy** - VapourSynth integration layer; fps preset menu.
-- **filmstrip.lua** - Filmstrip timeline overlay; composite rendering; resize/fullscreen handling.
-- **icc-detect.lua** - Per-file colour space and HDR detection; automatic player configuration.
-- **auto-subs.lua** - Smarter subtitle track selection. Select a subtitle track under circumstances as specific or as broad as you like. Most useful for auto-enabling `forced` subtitle tracks in multi-lingual video.
+**Modified from open source:**
+- [dyn_menu](https://github.com/tsl0922/mpv-menu-plugin) — dynamic right-click menu generated from input.conf bindings. Modified from the original mpv-menu-plugin for reliability.
+- [thumbfast](https://github.com/po5/thumbfast) — timeline hover thumbnails. Heavily modified → stall watchdog added, filmstrip integration, configurable process priority.
+
+**Bundled:**
+- [VapourSynth](https://github.com/vapoursynth/vapoursynth) — the frame processing framework powering interpolation.
+- [uosc](https://github.com/tomasklaen/uosc) — the interface layer. The de facto standard for mpv UI.
+- [recent-menu](https://github.com/natural-harmonia-gropius/recent-menu) — recently played files list.
+- [bjaan](https://github.com/bjaan/) — libraries for VapourSynth integration and interpolation.
 
 ---
 
-## Markdown note
+## Support
 
-If you're reading this as a `.md` file without a renderer, the [Markdown Reader](https://md-reader.github.io/) browser extension will render it nicely - just drag the file to your browser's address bar or use File - Open.
+mpv-synth is and always will be free. No premium tier, no feature gates, no ads. The code is on GitHub for anyone to read, fork, or contribute to.
+
+What it isn't is cost-free to build. The plugins, the bug hunts, the rendering pipeline deep dives. That's real time, and time is the one thing you can't get back. A small donation says "keep going" in a way that matters more than a star.
+
+If mpv-synth has been useful, that's enough. If you'd like to see it grow faster → a proper GUI for managing settings without touching conf files, more plugins, better documentation, then a coffee helps make that happen sooner rather than later.
+
+☕ **[Support development](https://buymeacoffee.com/ajcrowley)**
+
+If you run into a problem, [open an issue on GitHub](https://github.com/AJCrowley/mpv-synth/issues).
+
+---
+
+## Roadmap
+
+- **Now → Player & plugins:** The core player is stable and in daily use. Plugins are actively maintained.
+- **Autumn → GUI testing:** A Tauri-based GUI is in development to manage settings, updates, and plugins without touching conf files. Internal testing begins this autumn.
+- **After testing → Full release:** Barring paid work getting in the way, a full public GUI release should follow, aimed at users of all technical levels, not just those comfortable editing config files.
