@@ -41,6 +41,8 @@ That's the experience mpv-synth delivers on Windows. Open a video file and it pl
 
 **Self-updating** — Press `U` from within the player to pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and the updater itself. The entire toolchain stays current with a single keypress, or run `updater.bat` directly without opening the player.
 
+**Config Editor** — The config-editor plugin lets you open any conf file in your text editor or IDE of choice, straight from the right-click menu. Press `E` for mpv.conf, `I` for input.conf, or pick from the menu. Set your preferred editor once and it's one keypress away.
+
 ---
 
 ## Quick Start
@@ -169,6 +171,7 @@ mpv-synth is built on the work of a lot of talented people. Several plugins were
 - **osc-simplified** — minimal on-screen control bar with configurable skip buttons, dark/light modes, and rounded corners.
 - **vapoursynth** — frame interpolation integration. VapourSynth filter management with configurable FPS presets and auto-apply rules.
 - **open-file-dialog** — native Windows file/folder open dialog integration.
+- **config-editor** — open any conf file in your text editor or IDE of choice from the right-click menu.
 
 **Modified from open source:**
 - [dyn_menu](https://github.com/tsl0922/mpv-menu-plugin) — dynamic right-click menu generated from input.conf bindings. Modified from the original mpv-menu-plugin for reliability.
