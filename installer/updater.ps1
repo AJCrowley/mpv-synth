@@ -2,7 +2,7 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
-$UpdaterVersion = [version]"1.1.5"
+$UpdaterVersion = [version]"1.1.6"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
@@ -141,7 +141,17 @@ Thanks for using mpv-synth!
             Upgrade-mpv-Files-115
         }
     }
+	@{
+        Version = [version]"1.1.4"
+        Script = {
+            Upgrade-mpv-Files-116
+            Final-Message @"
+Upgrade complete.
 
+Thanks for using mpv-synth!
+"@
+        }
+    }
 )
 
 # ---
@@ -555,6 +565,57 @@ function Upgrade-mpv-Files-115 {
             "portable_config\helpers\opensubs_helper.py",
             "portable_config\helpers\fix_opensubs.ps1",
             "portable_config\input.conf"
+        )
+
+        foreach ($file in $files) {
+
+            $source = Join-Path $root.FullName $file
+            $target = Join-Path $destination $file
+
+            $targetDir = Split-Path $target -Parent
+            if (-not (Test-Path $targetDir)) {
+                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            }
+
+            Copy-Item $source $target -Force
+        }
+
+        if (-not (Test-Path $source)) {
+            throw "Files not found at $source"
+        }
+
+        Write-Host "Copying updated files..." -ForegroundColor Green
+
+        $targetDir = Split-Path $target -Parent
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+
+        Copy-Item -Path $source -Destination $target -Force
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Upgrade-mpv-Files-116 {
+
+    Write-Host "Updating Browser extension, please manually uninstall and reinstall from your browser's extensions..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+
+        $files = @(
+            "installer\mpv-synth-extension.zip",
+            "installer\updater.ps1"
         )
 
         foreach ($file in $files) {
