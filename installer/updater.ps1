@@ -555,6 +555,8 @@ function Upgrade-mpv-Files-115 {
         if (!$script:ReleaseDownloaded) {
             Download-Latest-Release
         }
+		
+		yt-dlp --update-to nightly
 
         $root = $script:ReleaseRoot
         $destination = (Get-Location).Path
@@ -951,9 +953,7 @@ function Get-Latest-Ytplugin ($plugin) {
         "yt-dlp*" {
             $ytdlp_channel = Check-Ytdlp-Channel
             $repo = switch ($ytdlp_channel) {
-                'stable'  { "https://github.com/yt-dlp/yt-dlp" }
                 'nightly' { "https://github.com/yt-dlp/yt-dlp-nightly-builds" }
-                'master'  { "https://github.com/yt-dlp/yt-dlp-master-builds" }
             }
             Write-Host "Fetching RSS feed for yt-dlp $ytdlp_channel" -ForegroundColor Green
             $resp    = [xml](Invoke-WebRequest "$repo/releases.atom" `
