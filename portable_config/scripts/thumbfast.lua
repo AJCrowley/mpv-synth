@@ -11,6 +11,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 ]]
 
 local options = {
+    enabled = true,
     -- Socket path (leave empty for auto)
     socket = "",
 
@@ -1037,35 +1038,37 @@ local function on_duration(prop, val)
     allow_fast_seek = (val or 30) >= 30
 end
 
-mp.observe_property("current-tracks/video", "native", function(name, value)
-    if pre_0_33_0 then
-        mp.unobserve_property(update_tracklist)
-        pre_0_33_0 = false
-    end
-    update_property(name, value)
-end)
+if options.enabled then
+    mp.observe_property("current-tracks/video", "native", function(name, value)
+        if pre_0_33_0 then
+            mp.unobserve_property(update_tracklist)
+            pre_0_33_0 = false
+        end
+        update_property(name, value)
+    end)
 
-mp.observe_property("track-list", "native", update_tracklist)
-mp.observe_property("display-hidpi-scale", "native", update_property_dirty)
-mp.observe_property("video-out-params", "native", update_property_dirty)
-mp.observe_property("video-params", "native", update_property_dirty)
-mp.observe_property("vf", "native", update_property_dirty)
-mp.observe_property("tone-mapping", "native", update_property_dirty)
-mp.observe_property("demuxer-via-network", "native", update_property)
-mp.observe_property("stream-open-filename", "native", update_property)
-mp.observe_property("macos-app-activation-policy", "native", update_property)
-mp.observe_property("current-vo", "native", update_property)
-mp.observe_property("video-rotate", "native", update_property)
-mp.observe_property("video-crop", "native", update_property)
-mp.observe_property("path", "native", update_property)
-mp.observe_property("vid", "native", sync_changes)
-mp.observe_property("edition", "native", sync_changes)
-mp.observe_property("duration", "native", on_duration)
+    mp.observe_property("track-list", "native", update_tracklist)
+    mp.observe_property("display-hidpi-scale", "native", update_property_dirty)
+    mp.observe_property("video-out-params", "native", update_property_dirty)
+    mp.observe_property("video-params", "native", update_property_dirty)
+    mp.observe_property("vf", "native", update_property_dirty)
+    mp.observe_property("tone-mapping", "native", update_property_dirty)
+    mp.observe_property("demuxer-via-network", "native", update_property)
+    mp.observe_property("stream-open-filename", "native", update_property)
+    mp.observe_property("macos-app-activation-policy", "native", update_property)
+    mp.observe_property("current-vo", "native", update_property)
+    mp.observe_property("video-rotate", "native", update_property)
+    mp.observe_property("video-crop", "native", update_property)
+    mp.observe_property("path", "native", update_property)
+    mp.observe_property("vid", "native", sync_changes)
+    mp.observe_property("edition", "native", sync_changes)
+    mp.observe_property("duration", "native", on_duration)
 
-mp.register_script_message("thumb", thumb)
-mp.register_script_message("clear", clear)
+    mp.register_script_message("thumb", thumb)
+    mp.register_script_message("clear", clear)
 
-mp.register_event("file-loaded", file_load)
-mp.register_event("shutdown", shutdown)
+    mp.register_event("file-loaded", file_load)
+    mp.register_event("shutdown", shutdown)
 
-mp.register_idle(watch_changes)
+    mp.register_idle(watch_changes)
+end

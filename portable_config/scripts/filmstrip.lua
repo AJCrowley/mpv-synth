@@ -24,13 +24,6 @@
 -- ── CONFIG FILE ────────────────────────────────────────────────────────────
 --   script-opts/filmstrip.conf
 --
--- ── PROCESS PRIORITY ───────────────────────────────────────────────────────
---   process_priority_map defines height → priority thresholds.
---   Format: comma-separated "height=priority" pairs.
---   The highest threshold that is <= the video height wins.
---   Valid priority values: idle, low, normal, high
---   Example: "720=high,1080=normal,1440=normal,2160=low"
---
 -- ── SCRIPT MESSAGES ────────────────────────────────────────────────────────
 --   script-message filmstrip-show       force-show
 --   script-message filmstrip-hide       force-hide
@@ -45,46 +38,19 @@ local options = {
     -- easy kill switch to disable script from config file
     enabled      = true,
     -- ── Thumbnail count ────────────────────────────────────────────────────
-    thumbnail_count = 125,
+    thumbnail_count = 150,
 
     -- ── Thumbnail height ───────────────────────────────────────────────────
     --   Controls how tall the filmstrip is, as a percentage of the uosc
     --   timeline height.
     thumbnail_height_percent = 80,
 
-    -- ── Slice alignment ────────────────────────────────────────────────────
-    slice_align = "centre",
-
-    -- ── Resize behaviour ───────────────────────────────────────────────────
-    --   remap      → FAST. Cached thumbnails re-composited.
-    --   regenerate → ACCURATE. Full rebuild at new geometry.
-    resize_behavior = "remap",
-
     -- ── Slide animation ────────────────────────────────────────────────────
     -- Duration of the Y-position slide in milliseconds. 0 = no animation.
     animation_duration = 100,
 
-    -- Frames per second for animation.
-    animation_fps = 30,
-
     -- ── Timeout before starting hide animation──────────────────────────────
     idle_timeout = 0,
-
-    -- ── uosc Timeline auto-detection ───────────────────────────────────────
-    uosc_timeline_size_max = 78,
-    uosc_scale             = 1,
-    uosc_scale_fullscreen  = 1,
-
-    -- ── Manual position ────────────────────────────────────────────────────
-    --   When manual_position=yes you can override individual values below.
-    --   bar_height: absolute pixel height (0 = use thumbnail_height_percent
-    --               of the auto-detected timeline height instead).
-    --   bar_y:      -1 = auto-pin to bottom of screen.
-    manual_position = false,
-    bar_x      = 0,
-    bar_y      = -1,   -- -1 = auto pin to bottom
-    bar_width  = 0,
-    bar_height = 0,    -- 0 = derive from thumbnail_height_percent (recommended)
 
     -- ── Generation ─────────────────────────────────────────────────────────
     --   max_concurrent: number of simultaneous ffmpeg processes for generation
@@ -92,10 +58,12 @@ local options = {
     max_concurrent = 4,
     hwdec          = "auto",
 
+    -- fps of slide in/out animation
+    animation_fps = 30,
+
     -- ── Process priority by video height ───────────────────────────────────
     -- Valid priorities: idle, low, normal, high
-    process_priority_map     = "720=normal,1080=low,1440=idle,2160=idle",
-    process_priority_default = "normal",
+    process_priority = "normal",
 
     -- ── Misc ───────────────────────────────────────────────────────────────
     -- overlay_id must be 0-63.
@@ -144,30 +112,14 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Process priority
 -- ─────────────────────────────────────────────────────────────────────────────
-
 local CPU_VALUES = { high = -10, normal = 0, low = 10, idle = 19 }
-
 -- Resolved once at build() time and reused for every subprocess in that session.
 local current_cpu = 0
 
 local function resolve_priority()
     local vp     = mp.get_property_native("video-out-params")
     local height = (vp and (vp.dh or vp.h)) or 0
-
-    -- Parse "h=priority,..." into a sorted-descending list.
-    local thresholds = {}
-    for entry in options.process_priority_map:gmatch("[^,]+") do
-        local h, p = entry:match("^%s*(%d+)%s*=%s*(%a+)%s*$")
-        if h then
-            thresholds[#thresholds + 1] = { tonumber(h), p:lower() }
-        end
-    end
-    table.sort(thresholds, function(a, b) return a[1] > b[1] end)
-
-    local label = options.process_priority_default:lower()
-    for _, tp in ipairs(thresholds) do
-        if height >= tp[1] then label = tp[2]; break end
-    end
+    local label = options.process_priority:lower()
 
     current_cpu = CPU_VALUES[label] or 0
     mp.msg.info(string.format(
@@ -211,13 +163,18 @@ end
 local function uosc_timeline_height()
     local conf = read_uosc_conf()
     local fs   = mp.get_property_bool("fullscreen") or false
-    local size = tonumber(conf.timeline_size_max) or options.uosc_timeline_size_max
+    local size = tonumber(conf.timeline_size_max) or 40
+    local windows_scale = mp.get_property_number("display-hidpi-scale")
+    if not windows_scale then
+        windows_scale = 1
+    end
     local scale
     if fs then
-        scale = tonumber(conf.scale_fullscreen) or tonumber(conf.scale) or options.uosc_scale_fullscreen
+        scale = tonumber(conf.scale_fullscreen) or tonumber(conf.scale) or 40
     else
         scale = tonumber(conf.scale) or options.uosc_scale
     end
+    scale = scale * windows_scale
     local h = math.max(1, math.floor(size * scale + 0.5))
     mp.msg.info(string.format(
         "filmstrip: timeline height = %dpx  (size_max=%g × scale=%g, fs=%s)",
@@ -393,26 +350,10 @@ local function resolve_geometry()
 
     local tl_h = uosc_timeline_height()
 
-    if options.manual_position then
-        bar_x = options.bar_x
-        bar_w = options.bar_width > 0 and options.bar_width or osd_w
-
-        -- bar_height > 0: use it as an absolute pixel override.
-        -- bar_height = 0 (default/recommended): derive from thumbnail_height_percent.
-        if options.bar_height > 0 then
-            bar_h = options.bar_height
-        else
-            bar_h = apply_height_percent(tl_h)
-        end
-
-        -- bar_y >= 0: explicit Y.  bar_y = -1: pin filmstrip to screen bottom.
-        bar_y = options.bar_y >= 0 and options.bar_y or (osd_h - bar_h)
-    else
-        bar_x = 0
-        bar_w = osd_w
-        bar_h = apply_height_percent(tl_h)
-        bar_y = osd_h - bar_h
-    end
+    bar_x = 0
+    bar_w = osd_w
+    bar_h = apply_height_percent(tl_h)
+    bar_y = osd_h - bar_h
 
     if bar_w < 2 then return false, "bar_width < 2" end
     if bar_h < 1 then return false, "bar_height < 1" end
@@ -557,11 +498,7 @@ local function tile_dest(i, n)
 end
 
 local function tile_sample_time(i, n, duration)
-    local align = (options.slice_align or "centre"):lower()
-    if     align == "left"  then return (i - 1) * duration / n
-    elseif align == "right" then return i       * duration / n
-    else                         return (i - 0.5) * duration / n
-    end
+    return (i - 0.5) * duration / n
 end
 
 local function slice_src_x(thumb_w, tile_w)
@@ -911,12 +848,7 @@ local function on_osd_dimensions(_, val)
     resize_timer = mp.add_timeout(0.5, function()
         resize_timer = nil
         if build_pending then build(); return end
-        local behavior = (options.resize_behavior or "remap"):lower()
-        if behavior == "regenerate" then
-            build()
-        else
-            if remap() == false then build() end
-        end
+        if remap() == false then build() end
     end)
 end
 

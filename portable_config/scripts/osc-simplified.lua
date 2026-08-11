@@ -8,6 +8,7 @@ local opt = require 'mp.options'
 -- default user option values
 -- do not touch, change them in osc.conf
 local user_opts = {
+    enabled = true,              -- enable the OSC
     light_mode = false,          -- when true: white bg, black controls
     border = true,               -- draw border on main box
     box_radius = 10,             -- corner radius of main box
@@ -1990,27 +1991,30 @@ local function validate_user_opts()
     end
 end
 
--- read options from config and command-line
-opt.read_options(user_opts, "osc-simplified", function(changed)
+if user_opts.enabled then
+    -- read options from config and command-line
+    opt.read_options(user_opts, "osc-simplified", function(changed)
+        validate_user_opts()
+        set_osc_styles()
+        set_time_styles(changed.timetotal, changed.timems)
+        if changed.tick_delay or changed.tick_delay_follow_display_fps then
+            set_tick_delay("display_fps", mp.get_property_number("display_fps"))
+        end
+        request_tick()
+        visibility_mode(user_opts.visibility, true)
+        update_duration_watch()
+        request_init()
+    end)
+
     validate_user_opts()
     set_osc_styles()
-    set_time_styles(changed.timetotal, changed.timems)
-    if changed.tick_delay or changed.tick_delay_follow_display_fps then
-        set_tick_delay("display_fps", mp.get_property_number("display_fps"))
-    end
-    request_tick()
+    set_time_styles(true, true)
+    set_tick_delay("display_fps", mp.get_property_number("display_fps"))
     visibility_mode(user_opts.visibility, true)
     update_duration_watch()
-    request_init()
-end)
 
-validate_user_opts()
-set_osc_styles()
-set_time_styles(true, true)
-set_tick_delay("display_fps", mp.get_property_number("display_fps"))
-visibility_mode(user_opts.visibility, true)
-update_duration_watch()
+    set_virt_mouse_area(0, 0, 0, 0, "input")
+    set_virt_mouse_area(0, 0, 0, 0, "window-controls")
+    set_virt_mouse_area(0, 0, 0, 0, "window-controls-title")
+end
 
-set_virt_mouse_area(0, 0, 0, 0, "input")
-set_virt_mouse_area(0, 0, 0, 0, "window-controls")
-set_virt_mouse_area(0, 0, 0, 0, "window-controls-title")

@@ -9,9 +9,9 @@ local msg = require('mp.msg')
 
 -- user options
 local o = {
+    enabled = true,          -- enable dynamic menu support
     use_mpv_impl = true,     -- use mpv's menu implementation if available
     uosc_syntax = false,     -- toggle uosc menu syntax support
-    escape_title = true,     -- escape & to && in menu title
     max_title_length = 80,   -- limit the title length, set to 0 to disable.
     max_playlist_items = 20, -- limit the playlist items in submenu, set to 0 to disable.
 }
@@ -135,9 +135,6 @@ end
 
 -- append menu item to menu
 local function append_menu(menu, item)
-    if (item.title and o.escape_title) then
-        item.title = item.title:gsub('&', '&&')
-    end
     menu[#menu + 1] = item
 end
 
@@ -633,6 +630,10 @@ local function parse_input_conf(conf)
     end
 
     return items
+end
+
+if not o.enabled then
+    return
 end
 
 -- script message: get <keyword> <src>
