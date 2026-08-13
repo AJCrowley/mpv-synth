@@ -14,8 +14,8 @@ mp.msg.info("VapourSynth script initialized. Prefs file: " .. PREFS_FILE)
 local options = {
     enabled = true,
     auto_apply = false,
-    auto_fps = 60,
-    auto_max_res = 1920, -- automatically apply if resolution is equal to or less than
+    auto_fps = "60",
+    auto_max_res = "1920", -- automatically apply if resolution is equal to or less than
 }
 require("mp.options").read_options(options, "vapoursynth")
 -- ---------------------------------------------------------------------------
@@ -68,6 +68,49 @@ local function set_current_path(path)
     else
         os.remove(CURRENT_PATH_FILE)
     end
+end
+
+local function split_csv(str)
+    local result = {}
+    for value in tostring(str):gmatch("([^,]+)") do
+        table.insert(result, value:match("^%s*(.-)%s*$"))
+    end
+    return result
+end
+
+local function validate_auto_lists(max_res_str, fps_str)
+    local max_res_list = split_csv(max_res_str)
+    local fps_list = split_csv(fps_str)
+    local ok = true
+    if #max_res_list ~= #fps_list then
+        mp.msg.warn(string.format(
+            "auto_max_res has %d value(s) but auto_fps has %d value(s); they should match 1:1",
+            #max_res_list, #fps_list
+        ))
+        ok = false
+    end
+    for i, max_res in ipairs(max_res_list) do
+        if not tonumber(max_res) then
+            mp.msg.warn("auto_max_res entry '" .. tostring(max_res) .. "' is not a valid number")
+            ok = false
+        end
+    end
+    return ok, max_res_list, fps_list
+end
+
+local function get_matching_fps(width, max_res_list, fps_list)
+    local best_res = nil
+    local best_fps = nil
+    for i, max_res in ipairs(max_res_list) do
+        local res_num = tonumber(max_res)
+        if res_num and width <= res_num then
+            if best_res == nil or res_num < best_res then
+                best_res = res_num
+                best_fps = fps_list[i]
+            end
+        end
+    end
+    return best_fps
 end
 
 -- ---------------------------------------------------------------------------
@@ -152,9 +195,20 @@ if options.enabled then
     -- watch video width property to auto-apply VapourSynth filter if enabled and resolution is below threshold
     mp.observe_property("video-params/w", "native", function(_, width)
         if options.auto_apply then
-            if width and width <= options.auto_max_res then
-                mp.msg.info("Auto-applying VapourSynth filter at " .. options.auto_fps)
-                mp.commandv("script-message", "vapoursynth_set_fps", tostring(options.auto_fps))
+            if width then
+                local valid, max_res_list, fps_list = validate_auto_lists(options.auto_max_res, options.auto_fps)
+                if not valid then
+                    mp.msg.warn("auto_fps / auto_max_res configuration looks inconsistent; proceeding best-effort")
+                end
+
+                local matched_fps = get_matching_fps(width, max_res_list, fps_list)
+
+                if matched_fps then
+                    mp.msg.info("Auto-applying VapourSynth filter at " .. matched_fps)
+                    mp.commandv("script-message", "vapoursynth_set_fps", tostring(matched_fps))
+                else
+                    mp.msg.info("Width " .. width .. " exceeds all configured auto_max_res thresholds; skipping auto-apply")
+                end
             end
         end
     end)
