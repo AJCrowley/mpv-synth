@@ -142,7 +142,7 @@ Thanks for using mpv-synth!
         }
     }
 	@{
-        Version = [version]"1.1.4"
+        Version = [version]"1.1.6"
         Script = {
             Upgrade-mpv-Files-116
             Final-Message @"
@@ -617,7 +617,9 @@ function Upgrade-mpv-Files-116 {
 
         $files = @(
             "installer\mpv-synth-extension.zip",
-            "installer\updater.ps1"
+            "installer\updater.ps1",
+            "portable_config\script-opts\vapoursynth.conf",
+            "portable_config\scripts\vapoursynth.lua"
         )
 
         foreach ($file in $files) {
