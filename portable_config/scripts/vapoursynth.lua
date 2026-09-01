@@ -14,8 +14,8 @@ mp.msg.info("VapourSynth script initialized. Prefs file: " .. PREFS_FILE)
 local options = {
     enabled = true,
     auto_apply = false,
-    auto_fps = "60",
-    auto_max_res = "1920", -- automatically apply if resolution is equal to or less than
+    auto_fps = "60,30",
+    auto_max_res = "1920,3840", -- automatically apply if resolution is equal to or less than
 }
 require("mp.options").read_options(options, "vapoursynth")
 -- ---------------------------------------------------------------------------
