@@ -66,9 +66,9 @@ local user_opts = {
     playlist_next_mbtn_left_command = "playlist-next",
     playlist_next_mbtn_right_command = "script-binding select/select-playlist; script-message-to osc osc-hide",
 
-    skip_forward_mbtn_left_command = "seek 300",
+    skip_forward_mbtn_left_command = "add chapter 1",
     skip_forward_mbtn_right_command = "seek 60",
-    skip_backward_mbtn_left_command = "seek -300",
+    skip_backward_mbtn_left_command = "add chapter -1",
     skip_backward_mbtn_right_command = "seek -60",
 
     play_pause_mbtn_left_command = "cycle pause",
