@@ -1536,6 +1536,30 @@ function Get-VapourSynth {
     }
 }
 
+function Set-VSScriptPath {
+    # Resolve ..\portable_config\... relative to the folder this script lives in
+    # (the installer folder), not the current working directory.
+    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
+    $relative  = Join-Path $scriptDir "..\portable_config\VapourSynth\Lib\site-packages\vapoursynth\vsscript.dll"
+    $vsscript  = [System.IO.Path]::GetFullPath($relative)
+
+    if (-not (Test-Path $vsscript)) {
+        Write-Host "Warning: vsscript.dll not found at $vsscript -- setting VSSCRIPT_PATH anyway." -ForegroundColor Yellow
+    }
+
+    # Machine scope when elevated, otherwise fall back to the current user.
+    $scope = if (Test-Admin) { "Machine" } else { "User" }
+
+    try {
+        [Environment]::SetEnvironmentVariable("VSSCRIPT_PATH", $vsscript, $scope)
+        $env:VSSCRIPT_PATH = $vsscript   # make it available to this session too
+        Write-Host "Set VSSCRIPT_PATH ($scope) = $vsscript" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed to set VSSCRIPT_PATH: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
 function Get-VSDLLs {
     $vs_dir  = Join-Path (Get-Location).Path "portable_config\VapourSynth"
     $vs1_dst = Join-Path $vs_dir "vs1-x64.dll"
@@ -1598,6 +1622,9 @@ try {
     Upgrade-Mpv
     Get-VapourSynth
     Get-VSDLLs
+    if ($Installing) {
+        Set-VSScriptPath
+    }
     Upgrade-Ytplugin
     Upgrade-FFmpeg
     Upgrade-Python
