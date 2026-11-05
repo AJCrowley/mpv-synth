@@ -23,25 +23,25 @@ That's the experience mpv-synth delivers on Windows. Open a video file and it pl
 
 ## Features
 
-**Frame Interpolation** — Full VapourSynth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
+**Frame Interpolation** - Full VapourSynth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
 
-**Automatic Colour Management** — The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time.
+**Automatic Colour Management** - The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time.
 
-**Filmstrip Timeline** — 150 evenly-spaced thumbnail slices by default, have as many or as few as you like to achieve your best look, composited into the seekbar, giving you a visual map of the entire file. Hover for a frame-accurate preview. Jump to any scene with a click.
+**Filmstrip Timeline** - 150 evenly-spaced thumbnail slices by default, have as many or as few as you like to achieve your best look, composited into the seekbar, giving you a visual map of the entire file. Hover for a frame-accurate preview. Jump to any scene with a click.
 
-**Auto-advance & Resume** — When a video ends, mpv-synth moves to the next file in the folder automatically → when you quit mid-file, it resumes exactly where you stopped. No manual bookmarking required.
+**Auto-advance & Resume** - When a video ends, mpv-synth moves to the next file in the folder automatically → when you quit mid-file, it resumes exactly where you stopped. No manual bookmarking required.
 
-**Smart Subtitle Selection** — The auto-subs plugin activates a subtitle track only when it matches every term in a configurable list → `match=en,forced` picks up English (Forced) automatically, while leaving everything else untouched. Fine-grained, or one-word simple.
+**Smart Subtitle Selection** - The auto-subs plugin activates a subtitle track only when it matches every term in a configurable list → `match=en,forced` picks up English (Forced) automatically, while leaving everything else untouched. Fine-grained, or one-word simple.
 
-**OpenSubtitles Integration** — The opensubs plugin searches and downloads subtitles from OpenSubtitles and other providers directly from the right-click menu. Manual search, best-match download, or browse results, all without leaving the player. Supports login credentials for premium providers.
+**OpenSubtitles Integration** - The opensubs plugin searches and downloads subtitles from OpenSubtitles and other providers directly from the right-click menu. Manual search, best-match download, or browse results, all without leaving the player. Supports login credentials for premium providers.
 
-**Simplified On-Screen Controls** — The osc-simplified plugin replaces mpv's default OSC with a clean, minimal control bar. Configurable skip buttons (left, right, middle click, each with its own seek duration), dark and light modes, and rounded corners. No clutter.
+**Simplified On-Screen Controls** - The osc-simplified plugin replaces mpv's default OSC with a clean, minimal control bar. Configurable skip buttons (left, right, middle click, each with its own seek duration), dark and light modes, and rounded corners. No clutter.
 
-**Dynamic Right-Click Menu** — The dyn_menu plugin builds a native Windows context menu from your input.conf bindings. Every shortcut you define appears in the menu automatically, organized by the menu path you specify. No separate menu config to maintain. Modified from the original mpv-menu-plugin for reliability.
+**Dynamic Right-Click Menu** - The dyn_menu plugin builds a native Windows context menu from your input.conf bindings. Every shortcut you define appears in the menu automatically, organized by the menu path you specify. No separate menu config to maintain. Modified from the original mpv-menu-plugin for reliability.
 
-**Self-updating** — Press `U` from within the player to pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and the updater itself. The entire toolchain stays current with a single keypress, or run `updater.bat` directly without opening the player.
+**Self-updating** - Press `U` from within the player to pull the latest versions of mpv, ffmpeg, yt-dlp, plugins, and the updater itself. The entire toolchain stays current with a single keypress, or run `updater.bat` directly without opening the player.
 
-**Config Editor** — The config-editor plugin lets you open any conf file in your text editor or IDE of choice, straight from the right-click menu. Press `E` for mpv.conf, `I` for input.conf, or pick from the menu. Set your preferred editor once and it's one keypress away.
+**Config Editor** - The config-editor plugin lets you open any conf file in your text editor or IDE of choice, straight from the right-click menu. Press `E` for mpv.conf, `I` for input.conf, or pick from the menu. Set your preferred editor once and it's one keypress away.
 
 ---
 
@@ -160,28 +160,28 @@ If generation impacts playback, reduce `max_concurrent` to 2 or 1 → thumbnails
 mpv-synth is built on the work of a lot of talented people. Several plugins were written from scratch for this project. Others are bundled from open source projects, some modified for reliability or to resolve issues found during testing.
 
 **Core:**
-- [mpv](https://github.com/mpv-player/mpv) — the player at the core of everything. Extraordinarily capable, extraordinarily extensible.
-- [mpv-hero](https://github.com/stax76/mpv-hero/) — the starting point and inspiration for this project.
+- [mpv](https://github.com/mpv-player/mpv) - the player at the core of everything. Extraordinarily capable, extraordinarily extensible.
+- [mpv-hero](https://github.com/stax76/mpv-hero/) - the starting point and inspiration for this project.
 
 **Original plugins (written for mpv-synth):**
-- **auto-subs** — automatic subtitle selection based on configurable match terms.
-- **opensubs** — OpenSubtitles search and download directly from the player. Supports multiple providers with optional login credentials.
-- **filmstrip** — filmstrip timeline with configurable generation and animation.
-- **icc-detect** — automatic ICC profile and HDR detection. Tone-maps HDR content on SDR displays using configurable algorithms.
-- **osc-simplified** — minimal on-screen control bar with configurable skip buttons, dark/light modes, and rounded corners.
-- **vapoursynth** — frame interpolation integration. VapourSynth filter management with configurable FPS presets and auto-apply rules.
-- **open-file-dialog** — native Windows file/folder open dialog integration.
-- **config-editor** — open any conf file in your text editor or IDE of choice from the right-click menu.
+- **auto-subs** - automatic subtitle selection based on configurable match terms.
+- **opensubs** - OpenSubtitles search and download directly from the player. Supports multiple providers with optional login credentials.
+- **filmstrip** - filmstrip timeline with configurable generation and animation.
+- **icc-detect** - automatic ICC profile and HDR detection. Tone-maps HDR content on SDR displays using configurable algorithms.
+- **osc-simplified** - minimal on-screen control bar with configurable skip buttons, dark/light modes, and rounded corners.
+- **vapoursynth** - frame interpolation integration. VapourSynth filter management with configurable FPS presets and auto-apply rules.
+- **open-file-dialog** - native Windows file/folder open dialog integration.
+- **config-editor** - open any conf file in your text editor or IDE of choice from the right-click menu.
 
 **Modified from open source:**
-- [dyn_menu](https://github.com/tsl0922/mpv-menu-plugin) — dynamic right-click menu generated from input.conf bindings. Modified from the original mpv-menu-plugin for reliability.
-- [thumbfast](https://github.com/po5/thumbfast) — timeline hover thumbnails. Heavily modified → stall watchdog added, filmstrip integration, configurable process priority.
+- [dyn_menu](https://github.com/tsl0922/mpv-menu-plugin) - dynamic right-click menu generated from input.conf bindings. Modified from the original mpv-menu-plugin for reliability.
+- [thumbfast](https://github.com/po5/thumbfast) - timeline hover thumbnails. Heavily modified → stall watchdog added, filmstrip integration, configurable process priority.
 
 **Bundled:**
-- [VapourSynth](https://github.com/vapoursynth/vapoursynth) — the frame processing framework powering interpolation.
-- [uosc](https://github.com/tomasklaen/uosc) — the interface layer. The de facto standard for mpv UI.
-- [recent-menu](https://github.com/natural-harmonia-gropius/recent-menu) — recently played files list.
-- [bjaan](https://github.com/bjaan/) — libraries for VapourSynth integration and interpolation.
+- [VapourSynth](https://github.com/vapoursynth/vapoursynth) - the frame processing framework powering interpolation.
+- [uosc](https://github.com/tomasklaen/uosc) - the interface layer. The de facto standard for mpv UI.
+- [recent-menu](https://github.com/natural-harmonia-gropius/recent-menu) - recently played files list.
+- [bjaan](https://github.com/bjaan/) - libraries for VapourSynth integration and interpolation.
 
 ---
 
