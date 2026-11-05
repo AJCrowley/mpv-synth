@@ -23,7 +23,7 @@ That's the experience mpv-synth delivers on Windows. Open a video file and it pl
 
 ## Features
 
-**Frame Interpolation** - Full VapourSynth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
+**Frame Interpolation** - Full nth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
 
 **Automatic Colour Management** - The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time.
 
@@ -61,7 +61,7 @@ Done.
 
 1. Download the zip and extract it where you want the installation to live. `C:\Program Files\` is the recommended location.
 
-2. Run `INSTALL.BAT`. This single script downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, and VapourSynth\*; registers file associations; creates Start Menu and AutoPlay entries; then removes itself. **The install is interactive**. Read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your machine is more than roughly a decade old, choose `x86_64` at the first prompt rather than the default `x86_64-v3`. Any modern hardware should handle v3 fine.
+2. Run `INSTALL.BAT`. This single script downloads the latest versions of mpv, ffmpeg, ffprobe, yt-dlp, and VapourSynth; registers file associations; creates Start Menu and AutoPlay entries; then removes itself. **The install is interactive**. Read the prompts as they appear. Defaults are set to the recommended choices throughout, with one exception: if your machine is more than roughly a decade old, choose `x86_64` at the first prompt rather than the default `x86_64-v3`. Any modern hardware should handle v3 fine.
 
 3. Set your language (optional, English by default). Open `portable_config\mpv.conf` and set your preferred language codes:
    ```
@@ -75,8 +75,6 @@ Done.
    The `match` list is comma-separated with no spaces. Each entry must appear somewhere in the subtitle track's name or language tag for it to be selected. The default `match=en,forced` targets tracks labelled something like English (Forced).
 
 4. Double-click a video. mpv-synth registers itself as the default handler for common video formats. If Windows asks which app to use, select mpv-synth and tick "Always".
-
-\* VapourSynth have released R74, which is not yet compatible, so R73 will be used until such time as that changes.
 
 ### Browser extensions
 
@@ -189,18 +187,10 @@ mpv-synth is built on the work of a lot of talented people. Several plugins were
 
 mpv-synth is and always will be free. No premium tier, no feature gates, no ads. The code is on GitHub for anyone to read, fork, or contribute to.
 
-What it isn't is cost-free to build. The plugins, the bug hunts, the rendering pipeline deep dives. That's real time, and time is the one thing you can't get back. A small donation says "keep going" in a way that matters more than a star.
-
-If mpv-synth has been useful, that's enough. If you'd like to see it grow faster → a proper GUI for managing settings without touching conf files, more plugins, better documentation, then a coffee helps make that happen sooner rather than later.
+If mpv-synth has been useful, that's enough. I'm grateful for every person who makes the decision to use this media player. If you'd like to see it grow faster → a proper GUI for managing settings without touching conf files, more plugins, better documentation, then a coffee helps make that happen sooner rather than later.
 
 ☕ **[Support development](https://buymeacoffee.com/ajcrowley)**
 
 If you run into a problem, [open an issue on GitHub](https://github.com/AJCrowley/mpv-synth/issues).
 
 ---
-
-## Roadmap
-
-- **Now → Player & plugins:** The core player is stable and in daily use. Plugins are actively maintained.
-- **Autumn → GUI testing:** A Tauri-based GUI is in development to manage settings, updates, and plugins without touching conf files. Internal testing begins this autumn.
-- **After testing → Full release:** Barring paid work getting in the way, a full public GUI release should follow, aimed at users of all technical levels, not just those comfortable editing config files.
