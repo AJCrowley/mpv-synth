@@ -1,4 +1,4 @@
-param(
+.0param(
     [switch]$Unattended,
 	[switch]$Installing
 )
@@ -9,9 +9,9 @@ $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
 $script:ReleaseDownloaded = $false
 
 # ===========================================================================
-# TEST SWITCH -- run the 1.1.9 migration directly, ignoring the version
+# TEST SWITCH -- run the 1.2.0 migration directly, ignoring the version
 # registry entirely:
-#   $true  = the next run executes ONLY the 1.1.9 migration code (it keeps
+#   $true  = the next run executes ONLY the 1.2.0 migration code (it keeps
 #            the files already in the tree, replaces the VapourSynth runtime
 #            with the latest stable release the official way, refreshes the
 #            svpflow DLLs and re-asserts VSSCRIPT_PATH).
@@ -165,9 +165,9 @@ Thanks for using mpv-synth!
         }
     }
     @{
-        Version = [version]"1.1.9"
+        Version = [version]"1.2.0"
         Script = {
-            Upgrade-mpv-Files-119
+            Upgrade-mpv-Files-120
             Final-Message @"
 Upgrade complete.
 
@@ -684,7 +684,7 @@ function Upgrade-mpv-Files-116 {
     }
 }
 
-function Upgrade-mpv-Files-119 {
+function Upgrade-mpv-Files-120 {
 
     Write-Host "Upgrading SVPflow + VapourSynth runtime, vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf..." -ForegroundColor Green
 
@@ -986,22 +986,22 @@ function Invoke-Migrations {
     Write-Host "Installed version: $installed"
     Write-Host "Updater version:   $UpdaterVersion"
 
-    # TEST SWITCH: run only the 1.1.9 migration straight away, ignoring the
+    # TEST SWITCH: run only the 1.2.0 migration straight away, ignoring the
     # registry and every other migration block.
     if ($script:ForceMigrationsOnNextRun) {
         Write-Host ""
-        Write-Host "*** TEST SWITCH ACTIVE -- forcing the 1.1.9 migration directly ***" -ForegroundColor Magenta
+        Write-Host "*** TEST SWITCH ACTIVE -- forcing the 1.2.0 migration directly ***" -ForegroundColor Magenta
         Write-Host "" -ForegroundColor Magenta
 
-        $forced = $migrations | Where-Object { $_.Version -eq [version]"1.1.9" }
+        $forced = $migrations | Where-Object { $_.Version -eq [version]"1.2.0" }
         if (-not $forced) {
-            throw "The 1.1.9 migration block was not found in updater.ps1."
+            throw "The 1.2.0 migration block was not found in updater.ps1."
         }
 
-        Write-Host "Running migration 1.1.9 (forced)" -ForegroundColor Cyan
+        Write-Host "Running migration 1.2.0 (forced)" -ForegroundColor Cyan
         try {
             & $forced.Script
-            Set-InstalledVersion ([version]"1.1.9")
+            Set-InstalledVersion ([version]"1.2.0")
             Write-Host "Migration completed." -ForegroundColor Green
         }
         catch {
