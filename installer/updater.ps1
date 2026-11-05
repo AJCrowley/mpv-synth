@@ -2,7 +2,7 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
-$UpdaterVersion = [version]"1.1.9"
+$UpdaterVersion = [version]"1.2.0"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
@@ -744,15 +744,20 @@ function Upgrade-mpv-Files-119 {
         $vs_dir = Join-Path $destination "portable_config\VapourSynth"
         $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
 
-        if (Test-Path $new_sentinel) {
+        if (Test-VapourSynth-Healthy $vs_dir) {
             Write-Host "VapourSynth R80+ runtime already in place -- skipping reinstall." -ForegroundColor Green
         }
         else {
             $null = New-Item -ItemType Directory -Force $vs_dir
             Reset-VapourSynth-Folder $vs_dir
             Install-VapourSynth-Runtime $vs_dir
-            Set-VSScriptPath
         }
+
+        # Always refresh the pointers, healthy tree or fresh install: stale
+        # VSSCRIPT_PATH / VSSCRIPT_DLL values (e.g. from a system python's
+        # pip-installed vapoursynth) otherwise survive every pass, because a
+        # healthy tree never reaches the reinstall branch that used to do it.
+        Set-VSScriptPath
 
         # 3) Make sure the SVPflow DLLs are current (open-svpflow releases).
         Get-VSDLLs
@@ -996,7 +1001,7 @@ function Invoke-Migrations {
         Write-Host "Running migration 1.1.9 (forced)" -ForegroundColor Cyan
         try {
             & $forced.Script
-            Set-InstalledVersion [version]"1.1.9"
+            Set-InstalledVersion ([version]"1.1.9")
             Write-Host "Migration completed." -ForegroundColor Green
         }
         catch {
@@ -1114,11 +1119,10 @@ function Check-Ytplugin-In-System {
 function Get-Latest-Ytplugin ($plugin) {
     switch -wildcard ($plugin) {
         "yt-dlp*" {
-            $ytdlp_channel = Check-Ytdlp-Channel
-            $repo = switch ($ytdlp_channel) {
-                'nightly' { "https://github.com/yt-dlp/yt-dlp-nightly-builds" }
-            }
-            Write-Host "Fetching RSS feed for yt-dlp $ytdlp_channel" -ForegroundColor Green
+            # Kris (19:14): the nightly channel is permanent; the
+            # stable/master choice was removed along with Check-Ytdlp-Channel.
+            $repo = "https://github.com/yt-dlp/yt-dlp-nightly-builds"
+            Write-Host "Fetching RSS feed for yt-dlp nightly" -ForegroundColor Green
             $resp    = [xml](Invoke-WebRequest "$repo/releases.atom" `
                             -MaximumRedirection 0 -ErrorAction Ignore -UseBasicParsing).Content
             $version = $resp.feed.entry[0].link.href.split("/")[-1]
@@ -1139,12 +1143,8 @@ function Download-Ytplugin ($plugin, $version) {
         "yt-dlp*" {
             Write-Host "Downloading $plugin ($version)" -ForegroundColor Green
             $suffix = if (Test-Path (Join-Path $env:windir "SysWow64")) { "" } else { "_x86" }
-            $ytdlp_channel = Check-Ytdlp-Channel
-            $repo = switch ($ytdlp_channel) {
-                'stable'  { "https://github.com/yt-dlp/yt-dlp" }
-                'nightly' { "https://github.com/yt-dlp/yt-dlp-nightly-builds" }
-                'master'  { "https://github.com/yt-dlp/yt-dlp-master-builds" }
-            }
+            # nightly channel is permanent (see Get-Latest-Ytplugin)
+            $repo = "https://github.com/yt-dlp/yt-dlp-nightly-builds"
             $exe  = "$plugin$suffix.exe"
             $link = "$repo/releases/download/$version/$exe"
             Invoke-WebRequest -Uri $link -UserAgent $useragent -OutFile $exe
@@ -1193,13 +1193,17 @@ function Get-Arch {
 
 function ExtractGitFromFile {
     $stripped = (& ".\mpv.exe" --no-config 2>&1) | Select-String "mpv" | Select-Object -First 1
-    $stripped -match "-g([a-z0-9-]{7})" | Out-Null
-    return $matches[1]
+    # Length range, not an exact 7: shinchiro hashes are 10 chars
+    # (e.g. -g3138fc8eea in mpv-x86_64-20261105-git-3138fc8eea.7z) so an
+    # exact {7} silently missed, and indexing a null $matches then hard-
+    # killed the whole updater ("Cannot index into a null array").
+    if ($stripped -match "-g([a-z0-9-]{7,12})") { return $matches[1] }
+    return $null
 }
 
 function ExtractGitFromURL ($filename) {
-    $filename -match "-git-([a-z0-9-]{7})" | Out-Null
-    return $matches[1]
+    if ($filename -match "-git-([a-z0-9-]{7,12})") { return $matches[1] }
+    return $null
 }
 
 function ExtractDateFromFile {
@@ -1208,8 +1212,8 @@ function ExtractDateFromFile {
 }
 
 function ExtractDateFromURL ($filename) {
-    $filename -match "mpv-[xi864_].*-([0-9]{8})-git-([a-z0-9-]{7})" | Out-Null
-    return $matches[1]
+    if ($filename -match "mpv-[xi864_].*-([0-9]{8})-git-([a-z0-9-]{7,12})") { return $matches[1] }
+    return $null
 }
 
 function Ensure-Deno ([string]$Context = "update") {
@@ -1409,31 +1413,6 @@ function Check-GetYTDL {
     return $get_ytdl
 }
 
-function Check-Ytdlp-Channel {
-    $doc, $file = Get-SettingsDoc
-
-    if ($null -eq $doc.settings.ytdlpchannel) {
-        $node = $doc.CreateElement("ytdlpchannel")
-        $node.AppendChild($doc.CreateTextNode("unset")) | Out-Null
-        $doc.settings.AppendChild($node) | Out-Null
-    }
-
-    if ($doc.settings.ytdlpchannel -eq "unset") {
-        $result = Read-KeyOrTimeout `
-            "Which update channel for yt-dlp? [1=stable/2=nightly/3=master] (default=1)" "D1"
-        Write-Host ""
-        $channel = switch ($result) {
-            'D1' { "stable" }
-            'D2' { "nightly" }
-            'D3' { "master" }
-            default { Write-Host "Invalid input -- using default: stable" -ForegroundColor Yellow; "stable" }
-        }
-        $doc.settings.ytdlpchannel = $channel
-        $doc.Save($file)
-        return $channel
-    }
-    return $doc.settings.ytdlpchannel
-}
 
 function Check-Mpv {
     return Test-Path (Join-Path (Get-Location).Path "mpv.exe")
@@ -1453,10 +1432,13 @@ function Upgrade-Mpv {
         $remotegit  = ExtractGitFromURL $remoteName
         $remotedate = ExtractDateFromURL $remoteName
 
-        if ($localgit -match $remotegit -and $localdate -match $remotedate) {
+        if ($localgit -and $remotegit -and ($localgit -match $remotegit) -and ($localdate -match $remotedate)) {
             Write-Host "You are already using latest mpv build -- $remoteName" -ForegroundColor Green
         }
         else {
+            if (-not $localgit -or -not $localdate) {
+                Write-Host "Could not read the current mpv build info from .\mpv.exe -- assuming a newer build is available." -ForegroundColor Yellow
+            }
             Write-Host "Newer mpv build available" -ForegroundColor Green
             $need_download = $true
         }
@@ -1497,18 +1479,21 @@ function Upgrade-Ytplugin {
 
     $yt = Check-Ytplugin
     if ($yt) {
-        $latest = Get-Latest-Ytplugin((Get-Item $yt).BaseName)
-        if ((& $yt --version) -match $latest) {
-            Write-Host "You are already using latest $((Get-Item $yt).BaseName) -- $latest" -ForegroundColor Green
-            if ((Get-Item $yt).BaseName -match "yt-dlp*") { Ensure-Deno "update" }
+        if ((Get-Item $yt).BaseName -match "yt-dlp*") {
+            # Kris (19:14): always update to the nightly channel; the
+            # stable/master choice is gone. yt-dlp exits quickly when it
+            # is already current, so running it every pass is cheap.
+            Write-Host "Updating yt-dlp (nightly channel)..." -ForegroundColor Green
+            & $yt --update-to nightly
+            Ensure-Deno "update"
         }
         else {
-            Write-Host "Newer $((Get-Item $yt).BaseName) build available" -ForegroundColor Green
-            if ((Get-Item $yt).BaseName -match "yt-dlp*") {
-                & $yt --update-to (Check-Ytdlp-Channel)
-                Ensure-Deno "update"
+            $latest = Get-Latest-Ytplugin((Get-Item $yt).BaseName)
+            if ((& $yt --version) -match $latest) {
+                Write-Host "You are already using latest $((Get-Item $yt).BaseName) -- $latest" -ForegroundColor Green
             }
             else {
+                Write-Host "Newer $((Get-Item $yt).BaseName) build available" -ForegroundColor Green
                 & $yt --update
             }
         }
@@ -1530,6 +1515,34 @@ function Upgrade-Ytplugin {
     }
 }
 
+# gyan.dev 503s under load; one retry with a pause turns that from a
+# failed step into a successful pass most of the time (warn-and-continue
+# still covers the rest).
+function Invoke-WebRequestWithRetry {
+    param(
+        [string]$Uri,
+        [string]$OutFile
+    )
+    $attempt = 0
+    while ($true) {
+        $attempt++
+        try {
+            if ($OutFile) {
+                Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -UserAgent $useragent
+            }
+            else {
+                return Invoke-WebRequest -Uri $Uri -UseBasicParsing -UserAgent $useragent
+            }
+            return
+        }
+        catch {
+            if ($attempt -ge 3) { throw }
+            Write-Host "Request failed (attempt $attempt): $($_.Exception.Message) -- retrying in 5s..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
 function Upgrade-FFmpeg {
     if ((Check-GetFFmpeg) -eq "false") { return }
 
@@ -1538,7 +1551,8 @@ function Upgrade-FFmpeg {
     $archive_name = "ffmpeg-git-essentials.7z"
     $archive_path = Join-Path (Get-Location).Path $archive_name
 
-    $remote_ver = ([System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest $ver_url -UseBasicParsing -UserAgent $useragent).Content)).Trim()
+    $resp = Invoke-WebRequestWithRetry $ver_url
+    $remote_ver = ([System.Text.Encoding]::UTF8.GetString($resp.Content)).Trim()
     Write-Host "Latest ffmpeg/ffprobe build: $remote_ver" -ForegroundColor Green
 
     $ffmpeg_path  = Join-Path (Get-Location).Path "ffmpeg.exe"
@@ -1610,12 +1624,34 @@ function Read-KeyOrTimeout ($prompt, $key) {
     return $response.ToString()
 }
 
+# A present-but-mixed tree (a manual wheel copy) can contain the script
+# host without the embedded python or the pip-installed plugins, so the
+# presence of vsscript.dll alone is NOT proof of a healthy R80+ runtime.
+# All three parts have to exist, otherwise the wipe-and-reinstall runs and
+# the legacy litter gets cleaned out exactly as Kris asked (19:14 msg).
+function Test-VapourSynth-Healthy {
+    param([string]$VSDir)
+
+    $checks = @(
+        (Join-Path $VSDir "Lib\site-packages\vapoursynth\vsscript.dll"),
+        (Join-Path $VSDir "python.exe"),
+        (Join-Path $VSDir "Lib\site-packages\vapoursynth\plugins\open-svpflow")
+    )
+    foreach ($check in $checks) {
+        if (-not (Test-Path $check)) {
+            Write-Host "VapourSynth health check failed: missing $(Split-Path $check -Leaf) in $VSDir" -ForegroundColor Yellow
+            return $false
+        }
+    }
+    return $true
+}
+
 function Get-VapourSynth {
     $vs_dir      = Join-Path (Get-Location).Path "portable_config\VapourSynth"
     $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
     $old_sentinel = Join-Path $vs_dir "vapoursynth.dll"
 
-    if (Test-Path $new_sentinel) {
+    if (Test-VapourSynth-Healthy $vs_dir) {
         Write-Host "VapourSynth (R80+ pip layout) already installed -- skipping." -ForegroundColor Green
         return
     }
@@ -1809,24 +1845,61 @@ function Set-VSScriptPath {
     }
     elseif (Test-Path $root_path) {
         $vsscript = $root_path
-        Write-Host "Warning: using legacy root VSScript.dll ($root_path) -- run the 1.1.9+ update to get the official R80+ layout." -ForegroundColor Yellow
+        Write-Host "Warning: using legacy root VSScript.dll ($root_path) -- run the 1.2.0+ update to get the official R80+ layout." -ForegroundColor Yellow
     }
     else {
         Write-Host "Warning: vsscript.dll not found at $pip_path -- setting VSSCRIPT_PATH anyway." -ForegroundColor Yellow
         $vsscript = $pip_path
     }
 
-    # Machine scope when elevated, otherwise fall back to the current user.
+    # The pip layout buries python314.dll (the embedded interpreter) in the
+    # runtime root instead of next to mpv.exe. vsscript.dll links no libpython
+    # - it boots the interpreter dynamically - and mpv, when VSSCRIPT_PATH is
+    # empty, falls back to LoadLibrary("VSScript.dll") over the standard
+    # search (mpv dir, System32, PATH). Keeping the runtime root and the
+    # package directory on PATH makes BOTH the dynamic python boot and the
+    # bare-name fallback work from any launcher.
+    $runtime_root = [System.IO.Path]::GetFullPath((Join-Path $vs_dir "."))
+    $package_dir  = Join-Path $runtime_root "Lib\site-packages\vapoursynth"
     $scope = if (Test-Admin) { "Machine" } else { "User" }
+    $scope_path = [Environment]::GetEnvironmentVariable("Path", $scope)
+    $needed = @($runtime_root, $package_dir) | Where-Object { $scope_path -notlike "*$_*" }
+    if ($needed.Count -gt 0) {
+        try {
+            $new_path = $scope_path
+            foreach ($entry in $needed) {
+                if (-not $new_path) { $new_path = $entry }
+                else { $new_path = "$new_path;$entry" }
+            }
+            [Environment]::SetEnvironmentVariable("Path", $new_path, $scope)
+            Write-Host "Added to the $scope PATH: $($needed -join '; ')" -ForegroundColor Green
+            foreach ($entry in $needed) {
+                if ($env:Path -notlike "*$entry*") { $env:Path = "$env:Path;$entry" }
+            }
+        }
+        catch {
+            Write-Host "Could not update the $scope PATH: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
 
-    try {
-        [Environment]::SetEnvironmentVariable("VSSCRIPT_PATH", $vsscript, $scope)
-        $env:VSSCRIPT_PATH = $vsscript   # make it available to this session too
-        Write-Host "Set VSSCRIPT_PATH ($scope) = $vsscript" -ForegroundColor Green
+    # Write BOTH scopes to the SAME value, always. This machine has proved
+    # that mixed-scope pointers deadlock: an elevated run writes Machine,
+    # the user checks User (or vice versa), and whichever scope lost is
+    # invisible to somebody. Identical values in both scopes end the fight,
+    # and a fresh process merges to the same target either way.
+    foreach ($scope in @("Machine", "User")) {
+        try {
+            [Environment]::SetEnvironmentVariable("VSSCRIPT_PATH", $vsscript, $scope)
+            [Environment]::SetEnvironmentVariable("VSSCRIPT_DLL", $vsscript, $scope)
+        }
+        catch {
+            # Machine scope needs elevation; a non-elevated pass just skips it.
+            Write-Host "Could not set VSSCRIPT vars at $scope scope: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
     }
-    catch {
-        Write-Host "Failed to set VSSCRIPT_PATH: $($_.Exception.Message)" -ForegroundColor Red
-    }
+    $env:VSSCRIPT_PATH = $vsscript
+    $env:VSSCRIPT_DLL  = $vsscript
+    Write-Host "VSSCRIPT_PATH / VSSCRIPT_DLL (both scopes) = $vsscript" -ForegroundColor Green
 }
 
 function Get-VSDLLs {
@@ -1883,7 +1956,7 @@ function Get-VSDLLs {
     $archive_path = Join-Path $env:TEMP "open-svpflow-$asset_name"
     $extract_dir  = Join-Path $env:TEMP "svpflow_extract"
     try {
-        Invoke-WebRequest -Uri $archive_url -UserAgent $useragent -OutFile $archive_path
+        Invoke-WebRequestWithRetry -Uri $archive_url -OutFile $archive_path
         if (Test-Path $extract_dir) { Remove-Item -Recurse -Force $extract_dir }
         $null = New-Item -ItemType Directory -Force $extract_dir
         Expand-Archive -LiteralPath $archive_path -DestinationPath $extract_dir -Force
@@ -1927,12 +2000,32 @@ try {
 
 	$pc_dir = Join-Path (Get-Location).Path "portable_config"
 	if (Test-Path $pc_dir) {
-		Write-Host "Setting ACL on: $pc_dir" -ForegroundColor Yellow
-		& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
+		# Probe before granting: an icacls reset with /T costs real time on a
+		# tree holding an entire python embed, and it is only needed when
+		# something is actually locked. A tiny write probe answers it cheaply.
+		$probe = Join-Path $pc_dir ".acl-probe.tmp"
+		$needs_acl = $false
+		try {
+			$null = New-Item -Path $probe -ItemType File -Force -ErrorAction Stop
+			Remove-Item $probe -Force -ErrorAction SilentlyContinue
+		}
+		catch {
+			$needs_acl = $true
+		}
+		if ($needs_acl) {
+			Write-Host "Fixing ACL on: $pc_dir" -ForegroundColor Yellow
+			& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
+		}
+		else {
+			Write-Host "ACL on portable_config already allows writes - skipping icacls." -ForegroundColor Green
+		}
 	}
     Stop-Mpv
     Upgrade-Mpv
     Get-VapourSynth
+    # Always refresh the env pointers, every pass, install or migration:
+    # a once-wrong VSSCRIPT_PATH/VSSCRIPT_DLL otherwise outlives every run.
+    Set-VSScriptPath
 
     # --- Non-critical support-tool steps ------------------------------------
     # A failure in any of these used to abort the whole run BEFORE the
