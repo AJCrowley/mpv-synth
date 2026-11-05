@@ -117,9 +117,13 @@ All actions are available in the right-click menu with keyboard shortcuts displa
 | `Alt+` | VapourSynth off |
 | `Alt+5` | VapourSynth 60fps |
 | `Alt+8` | VapourSynth 120fps |
+| `p` | Take screenshot |
+| `P` | Take screenshot and don't include subtitles |
 | `I` | Edit keyboard bindings & menu |
 | `E` | Edit player configuration |
+| `e` | Show current media in file browser (explorer unless you're running some funky custom setup) |
 | `U` | Update all components (mpv, ffmpeg, yt-dlp…) |
+| `u` | Check for updates to UOSC skin |
 | `t` | Toggle statistics overlay |
 
 ### Customising shortcuts and the right-click menu
