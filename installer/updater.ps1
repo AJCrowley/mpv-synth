@@ -8,6 +8,18 @@ $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
 $script:ReleaseDownloaded = $false
 
+# ===========================================================================
+# TEST SWITCH -- run the 1.1.9 migration directly, ignoring the version
+# registry entirely:
+#   $true  = the next run executes ONLY the 1.1.9 migration code (it keeps
+#            the files already in the tree, replaces the VapourSynth runtime
+#            with the latest stable release the official way, refreshes the
+#            svpflow DLLs and re-asserts VSSCRIPT_PATH).
+#   $false = normal behaviour (migrations decided by the registry version).
+# Flip to $true to test, flip back to $false before committing/pushing!
+# ===========================================================================
+$script:ForceMigrationsOnNextRun = $false
+
 # ---------------------------------------------------------------------------
 # Registry helpers
 # ---------------------------------------------------------------------------
@@ -159,7 +171,11 @@ Thanks for using mpv-synth!
             Final-Message @"
 Upgrade complete.
 
-SVPflow now uses the open-svpflow DLLs (svpflow1_vs.dll and svpflow2_vs.dll), and vapoursynth.vpy and osc-simplified.lua have been updated.
+SVPflow now uses the open-svpflow DLLs (svpflow1_vs.dll and svpflow2_vs.dll), and vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf have been updated.
+
+The VapourSynth runtime itself was also upgraded to the latest stable release (the officially supported pip layout), and the open-svpflow plugins were installed into it via pip. Your frame-rate preferences and the svpflow DLLs were kept.
+
+Interpolation behaviour is now controlled from portable_config\script-opts\vapoursynth.conf: every knob (algorithm, motion search quality, masks, scene-change limits, the open-svpflow extras like dedup and the still-text mask, even CPU vs GPU rendering) is documented there and takes effect on the next file you play - no restart needed.
 
 Thanks for using mpv-synth!
 "@
@@ -670,63 +686,102 @@ function Upgrade-mpv-Files-116 {
 
 function Upgrade-mpv-Files-119 {
 
-    Write-Host "Updating SVPflow, vapoursynth.vpy and osc-simplified.lua..." -ForegroundColor Green
+    Write-Host "Upgrading SVPflow + VapourSynth runtime, vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf..." -ForegroundColor Green
 
     try {
 
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
-        }
-
-        $root = $script:ReleaseRoot
+        # TEST SWITCH: copy the script files straight from the GitHub release.
+        # In force mode the release may be older than this updater (the release
+        # is only rebuilt when Kris publishes), so the files already in the
+        # tree are the freshest ones -- keep them and just fix the runtime.
         $destination = (Get-Location).Path
+        $force_mode = $script:ForceMigrationsOnNextRun
 
-        $files = @(
-            "portable_config\VapourSynth\vapoursynth.vpy",
-            "portable_config\scripts\osc-simplified.lua"
-        )
-
-        foreach ($file in $files) {
-
-            $source = Join-Path $root.FullName $file
-            $target = Join-Path $destination $file
-
-            if (-not (Test-Path $source)) {
-                throw "$file not found in release at $source"
-            }
-
-            $targetDir = Split-Path $target -Parent
-            if (-not (Test-Path $targetDir)) {
-                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-            }
-
-            Copy-Item -Path $source -Destination $target -Force
-            Write-Host "Updated $file" -ForegroundColor Green
-        }
-
-        # Make sure the installed .vpy actually points at the new DLL names.
-        $vs_dir = Join-Path $destination "portable_config\VapourSynth"
-        $vpy    = Join-Path $vs_dir "vapoursynth.vpy"
-        if (Select-String -Path $vpy -Pattern "vs1-x64\.dll|vs2-x64\.dll" -Quiet) {
-            Write-Host "Warning: the vapoursynth.vpy in the latest release still references vs1-x64.dll / vs2-x64.dll. Keeping the old DLLs so interpolation keeps working." -ForegroundColor Yellow
-            return
-        }
-
-        # Remove the old renamed DLLs, but only once the new ones are confirmed present.
-        $new1 = Join-Path $vs_dir "svpflow1_vs.dll"
-        $new2 = Join-Path $vs_dir "svpflow2_vs.dll"
-
-        if ((Test-Path $new1) -and (Test-Path $new2)) {
-            foreach ($old in @("vs1-x64.dll", "vs2-x64.dll")) {
-                $oldPath = Join-Path $vs_dir $old
-                if (Test-Path $oldPath) {
-                    Remove-Item -Path $oldPath -Force -ErrorAction Stop
-                    Write-Host "Removed old $old" -ForegroundColor Green
-                }
-            }
+        if ($force_mode) {
+            Write-Host "Test-switch active: keeping the vapoursynth.vpy / .lua / .conf already in this tree (no release download)." -ForegroundColor Yellow
         }
         else {
-            Write-Host "Warning: new svpflow DLLs not found in $vs_dir -- keeping old vs1-x64.dll / vs2-x64.dll." -ForegroundColor Yellow
+            if (!$script:ReleaseDownloaded) {
+                Download-Latest-Release
+            }
+
+            $root = $script:ReleaseRoot
+
+            # 1) Overwrite the interpolation scripts with the versions from the
+            #    latest release. These are runtime support files, not user edits.
+            $files = @(
+                "portable_config\VapourSynth\vapoursynth.vpy",
+                "portable_config\scripts\vapoursynth.lua",
+                "portable_config\script-opts\vapoursynth.conf",
+                "portable_config\scripts\osc-simplified.lua"
+            )
+
+            foreach ($file in $files) {
+
+                $source = Join-Path $root.FullName $file
+                $target = Join-Path $destination $file
+
+                if (-not (Test-Path $source)) {
+                    throw "$file not found in release at $source"
+                }
+
+                $targetDir = Split-Path $target -Parent
+                if (-not (Test-Path $targetDir)) {
+                    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+                }
+
+                Copy-Item -Path $source -Destination $target -Force
+                Write-Host "Updated $file" -ForegroundColor Green
+            }
+        }
+
+        # 2) Replace the VapourSynth runtime itself. Anything older than the
+        #    R80+ pip layout (no Lib\site-packages\vapoursynth\vsscript.dll)
+        #    cannot run the new open-svpflow plugins: the old API-3 DLLs will
+        #    not load on R80+ cores, and a partial manual wheel copy leaves a
+        #    mixed tree. So we wipe everything except the user's own artifacts
+        #    and install the latest stable release the official way.
+        $vs_dir = Join-Path $destination "portable_config\VapourSynth"
+        $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
+
+        if (Test-Path $new_sentinel) {
+            Write-Host "VapourSynth R80+ runtime already in place -- skipping reinstall." -ForegroundColor Green
+        }
+        else {
+            $null = New-Item -ItemType Directory -Force $vs_dir
+            Reset-VapourSynth-Folder $vs_dir
+            Install-VapourSynth-Runtime $vs_dir
+            Set-VSScriptPath
+        }
+
+        # 3) Make sure the SVPflow DLLs are current (open-svpflow releases).
+        Get-VSDLLs
+
+        # 4) If the freshly-copied vpy still referenced the ancient DLL names,
+        #    keep the old files so interpolation keeps working.
+        $vpy = Join-Path $vs_dir "vapoursynth.vpy"
+        if (Test-Path $vpy) {
+            if (Select-String -Path $vpy -Pattern "vs1-x64\.dll|vs2-x64\.dll" -Quiet) {
+                Write-Host "Warning: the new vapoursynth.vpy still references vs1-x64.dll / vs2-x64.dll. Keeping the old DLLs so interpolation keeps working." -ForegroundColor Yellow
+                return
+            }
+
+            # Remove the old renamed DLLs, but only once the new ones are confirmed present.
+            $new1 = Join-Path $vs_dir "svpflow1_vs.dll"
+            $new2 = Join-Path $vs_dir "svpflow2_vs.dll"
+
+            if ((Test-Path $new1) -and (Test-Path $new2)) {
+                foreach ($old in @("vs1-x64.dll", "vs2-x64.dll")) {
+                    $oldPath = Join-Path $vs_dir $old
+                    if (Test-Path $oldPath) {
+                        Remove-Item -Path $oldPath -Force -ErrorAction Stop
+                        Write-Host "Removed old $old" -ForegroundColor Green
+                    }
+                }
+            }
+            else {
+                Write-Host "Warning: new svpflow DLLs not found in $vs_dir -- keeping old vs1-x64.dll / vs2-x64.dll." -ForegroundColor Yellow
+            }
         }
 
         Write-Host "Update complete." -ForegroundColor Green
@@ -925,6 +980,31 @@ function Invoke-Migrations {
 
     Write-Host "Installed version: $installed"
     Write-Host "Updater version:   $UpdaterVersion"
+
+    # TEST SWITCH: run only the 1.1.9 migration straight away, ignoring the
+    # registry and every other migration block.
+    if ($script:ForceMigrationsOnNextRun) {
+        Write-Host ""
+        Write-Host "*** TEST SWITCH ACTIVE -- forcing the 1.1.9 migration directly ***" -ForegroundColor Magenta
+        Write-Host "" -ForegroundColor Magenta
+
+        $forced = $migrations | Where-Object { $_.Version -eq [version]"1.1.9" }
+        if (-not $forced) {
+            throw "The 1.1.9 migration block was not found in updater.ps1."
+        }
+
+        Write-Host "Running migration 1.1.9 (forced)" -ForegroundColor Cyan
+        try {
+            & $forced.Script
+            Set-InstalledVersion [version]"1.1.9"
+            Write-Host "Migration completed." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "Migration failed." -ForegroundColor Red
+            throw
+        }
+        return
+    }
 
     foreach ($migration in ($migrations | Sort-Object Version)) {
 
@@ -1532,17 +1612,63 @@ function Read-KeyOrTimeout ($prompt, $key) {
 
 function Get-VapourSynth {
     $vs_dir      = Join-Path (Get-Location).Path "portable_config\VapourSynth"
-    $sentinel    = Join-Path $vs_dir "vapoursynth.dll"
+    $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
+    $old_sentinel = Join-Path $vs_dir "vapoursynth.dll"
 
-    if (Test-Path $sentinel) {
-        Write-Host "VapourSynth already installed -- skipping." -ForegroundColor Green
+    if (Test-Path $new_sentinel) {
+        Write-Host "VapourSynth (R80+ pip layout) already installed -- skipping." -ForegroundColor Green
         return
     }
 
-    Write-Host "VapourSynth not found -- installing." -ForegroundColor Green
+    if ((Test-Path $old_sentinel) -and -not $Installing) {
+        Write-Host "Legacy VapourSynth install detected -- the version migrations will upgrade it." -ForegroundColor Yellow
+        return
+    }
 
-    $ver = 73
-    Write-Host "Latest VapourSynth: R$ver" -ForegroundColor Green
+    if (Test-Path $old_sentinel) {
+        Write-Host "Legacy VapourSynth install found on a fresh install -- replacing with the latest runtime." -ForegroundColor Yellow
+        Reset-VapourSynth-Folder $vs_dir
+    }
+    else {
+        Write-Host "VapourSynth not found -- installing." -ForegroundColor Green
+    }
+
+    Install-VapourSynth-Runtime $vs_dir
+
+    if ($Installing) {
+        Set-VSScriptPath
+    }
+}
+
+# Latest stable VapourSynth release tag (e.g. "R82"); falls back to R82 if the
+# GitHub API is unreachable. /releases/latest never returns prereleases.
+function Get-LatestVapourSynthTag {
+    try {
+        $tag = (Get-LatestGithubRelease "vapoursynth/vapoursynth").tag_name
+        if ($tag -match "^R\d+$") { return $tag }
+    }
+    catch { }
+    Write-Host "Could not query the VapourSynth release API -- falling back to R82." -ForegroundColor Yellow
+    return "R82"
+}
+
+# The official R80+ portable recipe (mirrors vapoursynth's own
+# Install-Portable-VapourSynth.ps1): embedded Python, site-packages appended to
+# the ._pth, get-pip, then the wheel -- which IS the runtime now (core, script
+# host, plugins and VSPipe all live inside it). After the wheel:
+#   - open-svpflow is pip-installed so the interpolation plugins auto-load,
+#   - Scripts\*.exe pip shims are removed,
+#   - python -m vapoursynth register-install registers this portable runtime
+#     with Windows (the official VSSCRIPT_PATH mechanism),
+#   - a vapoursynth_runtime.txt marker records the installed release tag.
+# Callers doing a wipe-reinstall keep the user's own files via
+# Reset-VapourSynth-Folder (see $script:UsersVapourSynthArtifacts below).
+function Install-VapourSynth-Runtime {
+    param([string]$TargetDir)
+
+    $tag = Get-LatestVapourSynthTag
+    $ver = $tag.Substring(1)
+    Write-Host "Latest VapourSynth: $tag" -ForegroundColor Green
 
     $py_major = 3; $py_minor = 14; $py_patch = 0
     for ($i = 1; $i -le 20; $i++) {
@@ -1568,14 +1694,13 @@ function Get-VapourSynth {
         $null = New-Item -ItemType Directory -Force $dl_dir
         $null = New-Item -ItemType Directory -Force $py_tmp
         $null = New-Item -ItemType Directory -Force $vs_tmp
-        $null = New-Item -ItemType Directory -Force $vs_dir
 
         Write-Host "Downloading Python embed..." -ForegroundColor Green
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$py_major.$py_minor.$py_patch/python-$py_major.$py_minor.$py_patch-embed-amd64.zip" `
                           -OutFile $py_zip -UserAgent $useragent
 
-        Write-Host "Downloading VapourSynth portable..." -ForegroundColor Green
-        Invoke-WebRequest -Uri "https://github.com/vapoursynth/vapoursynth/releases/download/R$ver/VapourSynth64-Portable-R$ver.zip" `
+        Write-Host "Downloading VapourSynth $tag portable..." -ForegroundColor Green
+        Invoke-WebRequest -Uri "https://github.com/vapoursynth/vapoursynth/releases/download/$tag/VapourSynth64-Portable-R$ver.zip" `
                           -OutFile $vs_zip -UserAgent $useragent
 
         Write-Host "Downloading pip..." -ForegroundColor Green
@@ -1600,53 +1725,95 @@ function Get-VapourSynth {
                  Select-Object -First 1
         if ($wheel) {
             Write-Host "Installing VapourSynth wheel..." -ForegroundColor Green
-			
             & "$py_tmp\python.exe" -m pip install $wheel.FullName "--no-warn-script-location"
         } else {
-            Write-Host "VapourSynth wheel not found in portable zip." -ForegroundColor Red
-            return
+            throw "VapourSynth wheel not found in portable zip."
         }
 
-        Write-Host "Copying files to portable_config\VapourSynth..." -ForegroundColor Green
+        # The interpolation plugins, same environment: the pip package installs
+        # them under Lib\site-packages\vapoursynth\plugins\open-svpflow where
+        # R80+ cores auto-load them. The manual svpflow DLLs (Get-VSDLLs) are
+        # still fetched separately and take precedence when present.
+        Write-Host "Installing open-svpflow (frame interpolation plugins)..." -ForegroundColor Green
+        & "$py_tmp\python.exe" -m pip install "open-svpflow" "--no-warn-script-location"
 
-        Get-ChildItem $py_tmp -File | Copy-Item -Destination $vs_dir -Force
+        Write-Host "Registering the portable VapourSynth runtime with Windows..." -ForegroundColor Green
+        & "$py_tmp\python.exe" -m vapoursynth register-install
+
+        # pip console shims are not needed in the portable tree.
+        Get-ChildItem "$py_tmp\Scripts" -Filter "*.exe" -ErrorAction Ignore | Remove-Item -Force -ErrorAction Ignore
+
+        Write-Host "Copying files to $TargetDir..." -ForegroundColor Green
+
+        $null = New-Item -ItemType Directory -Force $TargetDir
+        Get-ChildItem $py_tmp -File | Copy-Item -Destination $TargetDir -Force
         $lib_src = Join-Path $py_tmp "Lib"
         if (Test-Path $lib_src) {
-            Copy-Item $lib_src $vs_dir -Recurse -Force
+            Copy-Item $lib_src $TargetDir -Recurse -Force
         }
 
-        Get-ChildItem $vs_tmp -File | Copy-Item -Destination $vs_dir -Force
+        Get-ChildItem $vs_tmp -File | Copy-Item -Destination $TargetDir -Force
 
-        foreach ($sub in @("vs-coreplugins", "vsgenstubs4")) {
-            $src = Join-Path $vs_tmp $sub
-            if (Test-Path $src) {
-                Copy-Item $src $vs_dir -Recurse -Force
-            } else {
-                Write-Host "Warning: $sub not found in VapourSynth portable zip." -ForegroundColor Yellow
-            }
+        if ($tag) {
+            Set-Content -Path (Join-Path $TargetDir "vapoursynth_runtime.txt") -Value $tag -Encoding ASCII
         }
 
-        Write-Host "VapourSynth installed OK" -ForegroundColor Green
-
+        Write-Host "VapourSynth $tag installed OK" -ForegroundColor Green
     }
     catch {
         Write-Host "VapourSynth install failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "You can manually run install-portable-vapoursynth.ps1 into portable_config\VapourSynth\" -ForegroundColor Yellow
+        Write-Host "You can manually run install-portable-vapoursynth.ps1 into $TargetDir\" -ForegroundColor Yellow
+        throw
     }
     finally {
         if (Test-Path $dl_dir) { Remove-Item -Recurse -Force $dl_dir }
     }
 }
 
+# Files inside portable_config\VapourSynth that must survive any wipe-reinstall.
+# Everything else in the folder is runtime data that the recipe recreates.
+$script:UsersVapourSynthArtifacts = @(
+    "vapoursynth.vpy",
+    "vapoursynth_fps.txt",
+    "vapoursynth_current_path.txt",
+    "vapoursynth_params.json",
+    "svpflow1_vs.dll",
+    "svpflow2_vs.dll",
+    "svpflow_version.txt",
+    "vapoursynth_runtime.txt"
+)
+
+function Reset-VapourSynth-Folder {
+    param([string]$VSDir)
+
+    Write-Host "Removing old VapourSynth runtime files from $VSDir (keeping your settings and DLLs)..." -ForegroundColor Yellow
+    Get-ChildItem -LiteralPath $VSDir -Force -ErrorAction SilentlyContinue |
+        Where-Object { $script:UsersVapourSynthArtifacts -notcontains $_.Name } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Set-VSScriptPath {
     # Resolve ..\portable_config\... relative to the folder this script lives in
     # (the installer folder), not the current working directory.
     $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
-    $relative  = Join-Path $scriptDir "..\portable_config\VapourSynth\Lib\site-packages\vapoursynth\vsscript.dll"
-    $vsscript  = [System.IO.Path]::GetFullPath($relative)
+    $vs_dir    = Join-Path $scriptDir "..\portable_config\VapourSynth"
+    # R80+ pip layout: the script host lives inside the vapoursynth package
+    # under site-packages. A bare VSScript.dll at the folder root only exists
+    # in manually-copied/legacy trees, so it is the fallback, not the target:
+    # pointing VSSCRIPT_PATH into a mixed tree is what breaks script loading.
+    $pip_path  = [System.IO.Path]::GetFullPath((Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"))
+    $root_path = [System.IO.Path]::GetFullPath((Join-Path $vs_dir "VSScript.dll"))
 
-    if (-not (Test-Path $vsscript)) {
-        Write-Host "Warning: vsscript.dll not found at $vsscript -- setting VSSCRIPT_PATH anyway." -ForegroundColor Yellow
+    if (Test-Path $pip_path) {
+        $vsscript = $pip_path
+    }
+    elseif (Test-Path $root_path) {
+        $vsscript = $root_path
+        Write-Host "Warning: using legacy root VSScript.dll ($root_path) -- run the 1.1.9+ update to get the official R80+ layout." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "Warning: vsscript.dll not found at $pip_path -- setting VSSCRIPT_PATH anyway." -ForegroundColor Yellow
+        $vsscript = $pip_path
     }
 
     # Machine scope when elevated, otherwise fall back to the current user.
@@ -1766,23 +1933,40 @@ try {
     Stop-Mpv
     Upgrade-Mpv
     Get-VapourSynth
-    Get-VSDLLs
+
+    # --- Non-critical support-tool steps ------------------------------------
+    # A failure in any of these used to abort the whole run BEFORE the
+    # version migrations could execute (the registry version key was never
+    # even written). The migrations are the important part of an update:
+    # support tools now fail with a warning and the run continues.
+    try { Get-VSDLLs }      catch { Write-Host "SVPflow DLL step failed: $($_.Exception.Message)" -ForegroundColor Red }
     if ($Installing) {
         Set-VSScriptPath
     }
-    Upgrade-Ytplugin
-    Upgrade-FFmpeg
-    Upgrade-Python
-	if ($Installing) {
+    try { Upgrade-Ytplugin } catch { Write-Host "yt-dlp plugin step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Upgrade-FFmpeg }   catch { Write-Host "ffmpeg step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Upgrade-Python }   catch { Write-Host "Python step failed: $($_.Exception.Message)" -ForegroundColor Red }
+
+	if ($Installing -and -not $script:ForceMigrationsOnNextRun) {
 		Write-Host ""
 		Write-Host "Fresh install detected -- skipping migration scripts." -ForegroundColor Green
-		Set-InstalledVersion $UpdaterVersion
+		try {
+			Set-InstalledVersion $UpdaterVersion
+		}
+		catch {
+			Write-Host "Could not record the installed version in the registry: $($_.Exception.Message)" -ForegroundColor Yellow
+		}
 	}
 	else {
 		Invoke-Migrations
 	}
 
-	Complete-SelfUpdate
+	try {
+		Complete-SelfUpdate
+	}
+	catch {
+		Write-Host "Self-update could not finish: $($_.Exception.Message)" -ForegroundColor Yellow
+	}
 
 	if ($Unattended) {
 		exit 0
@@ -1791,6 +1975,16 @@ try {
     Write-Host "Operation completed" -ForegroundColor Magenta
 }
 catch [System.Exception] {
-    Write-Host $_.Exception.Message -ForegroundColor Red
+    # Rich diagnostics: a single generic message hid which step killed the
+    # run and sent users looking at the wrong thing.
+    Write-Host ""
+    Write-Host "FATAL ERROR: $($_.Exception.GetType().Name): $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.InvocationInfo -and $_.InvocationInfo.PositionMessage) {
+        Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Red
+    }
+    if ($_.Exception -is [System.Management.Automation.MethodInvocationException] -and $_.Exception.InnerException) {
+        Write-Host "Cause: $($_.Exception.InnerException.Message)" -ForegroundColor Red
+    }
+    Write-Host "The update did not complete. Fix the cause and re-run updater.bat." -ForegroundColor Yellow
     exit 1
 }
