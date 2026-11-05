@@ -1642,7 +1642,7 @@ function Set-VSScriptPath {
     # Resolve ..\portable_config\... relative to the folder this script lives in
     # (the installer folder), not the current working directory.
     $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
-    $relative  = Join-Path $scriptDir "..\portable_config\VapourSynth\Lib\site-packages\vapoursynth\vsscript.dll"
+    $relative = Join-Path $scriptDir "..\portable_config\VapourSynth\VSScript.dll"
     $vsscript  = [System.IO.Path]::GetFullPath($relative)
 
     if (-not (Test-Path $vsscript)) {
