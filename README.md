@@ -11,7 +11,7 @@ mpv-synth is a Windows media player built on mpv, with frame interpolation, auto
 
 ## The problem
 
-Windows has never had a great media player. The third-party ecosystem hasn't kept pace with how people watch things now. The most popular options work, but they feel like they were designed a decade ago, because they were.
+Windows has never had a great media player. The third-party ecosystem hasn't kept pace with how people watch things now. The most popular options work, but they feel like they were designed decades ago, because they were.
 
 Clunky interfaces assembled from stock Windows form components. Windows that sit on your desktop doing nothing after playback ends. No memory of where you were in a file. No awareness that you might want to move on to the next episode automatically. No consideration of the display you're watching on, the colour space of the content, or whether the motion could benefit from interpolation.
 
