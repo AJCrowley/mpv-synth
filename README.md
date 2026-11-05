@@ -3,7 +3,7 @@
 
 Official website: https://mpvsynth.app
 
-mpv-synth is a Windows media player built on mpv, with frame interpolation, automatic HDR colour management, a filmstrip timeline, OpenSubtitles integration, and one-click browser streaming. Free and open source.
+mpv-synth is a Windows media player built on mpv, with frame interpolation, automatic HDR colour management (no more green and purple DolbyVision files), a filmstrip timeline, OpenSubtitles integration, and one-click browser streaming. Free and open source.
 
 ![mpv-synth](screenshot-opensubs.png)
 
