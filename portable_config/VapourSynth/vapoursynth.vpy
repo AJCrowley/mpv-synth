@@ -65,9 +65,9 @@ else:
     # Load SVPflow plugins if not already loaded
     # ---------------------------------------------------------------------------
     if not hasattr(core, "svp1"):
-        core.std.LoadPlugin(os.path.join(script_directory, "vs1-x64.dll"))
+        core.std.LoadPlugin(os.path.join(script_directory, "svpflow1_vs.dll"))
     if not hasattr(core, "svp2"):
-        core.std.LoadPlugin(os.path.join(script_directory, "vs2-x64.dll"))
+        core.std.LoadPlugin(os.path.join(script_directory, "svpflow2_vs.dll"))
 
     # ---------------------------------------------------------------------------
     # SVPflow parameters

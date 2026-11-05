@@ -2,7 +2,7 @@ param(
     [switch]$Unattended,
 	[switch]$Installing
 )
-$UpdaterVersion = [version]"1.1.6"
+$UpdaterVersion = [version]"1.1.9"
 $fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
 $useragent  = "mpv-win-updater"
 $RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
@@ -147,6 +147,19 @@ Thanks for using mpv-synth!
             Upgrade-mpv-Files-116
             Final-Message @"
 Upgrade complete.
+
+Thanks for using mpv-synth!
+"@
+        }
+    }
+    @{
+        Version = [version]"1.1.9"
+        Script = {
+            Upgrade-mpv-Files-119
+            Final-Message @"
+Upgrade complete.
+
+SVPflow now uses the open-svpflow DLLs (svpflow1_vs.dll and svpflow2_vs.dll), and vapoursynth.vpy and osc-simplified.lua have been updated.
 
 Thanks for using mpv-synth!
 "@
@@ -655,6 +668,74 @@ function Upgrade-mpv-Files-116 {
     }
 }
 
+function Upgrade-mpv-Files-119 {
+
+    Write-Host "Updating SVPflow, vapoursynth.vpy and osc-simplified.lua..." -ForegroundColor Green
+
+    try {
+
+        if (!$script:ReleaseDownloaded) {
+            Download-Latest-Release
+        }
+
+        $root = $script:ReleaseRoot
+        $destination = (Get-Location).Path
+
+        $files = @(
+            "portable_config\VapourSynth\vapoursynth.vpy",
+            "portable_config\scripts\osc-simplified.lua"
+        )
+
+        foreach ($file in $files) {
+
+            $source = Join-Path $root.FullName $file
+            $target = Join-Path $destination $file
+
+            if (-not (Test-Path $source)) {
+                throw "$file not found in release at $source"
+            }
+
+            $targetDir = Split-Path $target -Parent
+            if (-not (Test-Path $targetDir)) {
+                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+            }
+
+            Copy-Item -Path $source -Destination $target -Force
+            Write-Host "Updated $file" -ForegroundColor Green
+        }
+
+        # Make sure the installed .vpy actually points at the new DLL names.
+        $vs_dir = Join-Path $destination "portable_config\VapourSynth"
+        $vpy    = Join-Path $vs_dir "vapoursynth.vpy"
+        if (Select-String -Path $vpy -Pattern "vs1-x64\.dll|vs2-x64\.dll" -Quiet) {
+            Write-Host "Warning: the vapoursynth.vpy in the latest release still references vs1-x64.dll / vs2-x64.dll. Keeping the old DLLs so interpolation keeps working." -ForegroundColor Yellow
+            return
+        }
+
+        # Remove the old renamed DLLs, but only once the new ones are confirmed present.
+        $new1 = Join-Path $vs_dir "svpflow1_vs.dll"
+        $new2 = Join-Path $vs_dir "svpflow2_vs.dll"
+
+        if ((Test-Path $new1) -and (Test-Path $new2)) {
+            foreach ($old in @("vs1-x64.dll", "vs2-x64.dll")) {
+                $oldPath = Join-Path $vs_dir $old
+                if (Test-Path $oldPath) {
+                    Remove-Item -Path $oldPath -Force -ErrorAction Stop
+                    Write-Host "Removed old $old" -ForegroundColor Green
+                }
+            }
+        }
+        else {
+            Write-Host "Warning: new svpflow DLLs not found in $vs_dir -- keeping old vs1-x64.dll / vs2-x64.dll." -ForegroundColor Yellow
+        }
+
+        Write-Host "Update complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
 function Download-Latest-Release {
     Write-Host "Downloading mpv-synth latest release..." -ForegroundColor Green
 
@@ -1100,6 +1181,27 @@ function Ensure-Deno ([string]$Context = "update") {
     Check-7z
     Extract-Archive $archive
     Check-Autodelete $archive
+}
+
+function Stop-Mpv {
+    # Close any running mpv so nothing it has loaded (mpv.exe, VapourSynth/SVPflow DLLs,
+    # scripts) is locked while files are overwritten or deleted.
+    if (-not (Get-Process -Name mpv -ErrorAction SilentlyContinue)) { return }
+
+    Write-Host "Closing running mpv instance(s)..." -ForegroundColor Yellow
+    & taskkill /F /IM mpv.exe 2>&1 | Out-Null
+
+    # Wait (up to ~10s) for the process to actually exit and release its file handles.
+    for ($i = 0; $i -lt 20; $i++) {
+        if (-not (Get-Process -Name mpv -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (Get-Process -Name mpv -ErrorAction SilentlyContinue) {
+        Write-Host "Warning: mpv is still running; some files may be locked." -ForegroundColor Red
+    }
+    else {
+        Start-Sleep -Seconds 1
+    }
 }
 
 function Test-Admin {
@@ -1561,40 +1663,82 @@ function Set-VSScriptPath {
 }
 
 function Get-VSDLLs {
-    $vs_dir  = Join-Path (Get-Location).Path "portable_config\VapourSynth"
-    $vs1_dst = Join-Path $vs_dir "vs1-x64.dll"
-    $vs2_dst = Join-Path $vs_dir "vs2-x64.dll"
-    if ((Test-Path $vs1_dst) -and (Test-Path $vs2_dst)) {
-        Write-Host "VapourSynth interface DLLs already present -- skipping." -ForegroundColor Green
-        return
+    $vs_dir       = Join-Path (Get-Location).Path "portable_config\VapourSynth"
+    $vs1_dst      = Join-Path $vs_dir "svpflow1_vs.dll"
+    $vs2_dst      = Join-Path $vs_dir "svpflow2_vs.dll"
+    $version_file = Join-Path $vs_dir "svpflow_version.txt"
+    $repo         = "Z1xus/open-svpflow"
+    $asset_name   = "x86_64-pc-windows-msvc.zip"
+
+    $have_dlls = (Test-Path $vs1_dst) -and (Test-Path $vs2_dst)
+
+    # Tag of the open-svpflow release currently installed (recorded after each successful install).
+    $local_tag = $null
+    if (Test-Path $version_file) {
+        $local_tag = (Get-Content $version_file -Raw -ErrorAction Ignore)
+        if ($local_tag) { $local_tag = $local_tag.Trim() }
     }
-    Write-Host "VapourSynth interface DLLs not found -- downloading (first-install only)." -ForegroundColor Green
-    $archive_url  = "https://raw.github.com/bjaan/smoothvideo/main/SVPflow_LastGoodVersions.7z"
-    $archive_name = "SVPflow_LastGoodVersions.7z"
-    $archive_path = Join-Path $env:TEMP $archive_name
+
+    # Tag of the latest published release.
+    $remote_tag = $null
+    try {
+        $remote_tag = (Get-LatestGithubRelease $repo).tag_name
+    }
+    catch {
+        $remote_tag = $null
+    }
+
+    if ($have_dlls) {
+        if (-not $remote_tag) {
+            Write-Host "Could not check for new SVPflow DLLs -- keeping installed version." -ForegroundColor Yellow
+            return
+        }
+        if ($local_tag -eq $remote_tag) {
+            Write-Host "You are already using latest SVPflow DLLs -- $remote_tag" -ForegroundColor Green
+            return
+        }
+        $from = if ($local_tag) { $local_tag } else { "unknown version" }
+        Write-Host "Newer SVPflow DLLs available -- $from -> $remote_tag" -ForegroundColor Green
+    }
+    else {
+        Write-Host "SVPflow VapourSynth DLLs not found -- downloading." -ForegroundColor Green
+    }
+
+    # Prefer the exact tag we just looked up so the recorded version always matches what was
+    # downloaded; fall back to the /latest/ redirect if the tag lookup failed.
+    $archive_url = if ($remote_tag) {
+        "https://github.com/$repo/releases/download/$([uri]::EscapeDataString($remote_tag))/$asset_name"
+    }
+    else {
+        "https://github.com/$repo/releases/latest/download/$asset_name"
+    }
+
+    $archive_path = Join-Path $env:TEMP "open-svpflow-$asset_name"
     $extract_dir  = Join-Path $env:TEMP "svpflow_extract"
     try {
         Invoke-WebRequest -Uri $archive_url -UserAgent $useragent -OutFile $archive_path
         if (Test-Path $extract_dir) { Remove-Item -Recurse -Force $extract_dir }
         $null = New-Item -ItemType Directory -Force $extract_dir
-        Check-7z
-        $7z = Get-7z
-        & $7z x -y "-o$extract_dir" $archive_path
-        $src1 = Join-Path $extract_dir "x64_vs\svpflow1_vs.dll"
-        $src2 = Join-Path $extract_dir "x64_vs\svpflow2_vs.dll"
-        if (-not (Test-Path $src1) -or -not (Test-Path $src2)) {
-            Write-Host "VapourSynth interface DLLs not found inside archive -- check the archive structure." -ForegroundColor Red
+        Expand-Archive -LiteralPath $archive_path -DestinationPath $extract_dir -Force
+        # Search recursively so this still works if the zip nests the DLLs in a subfolder.
+        $src1 = Get-ChildItem -Path $extract_dir -Filter "svpflow1_vs.dll" -Recurse -File | Select-Object -First 1
+        $src2 = Get-ChildItem -Path $extract_dir -Filter "svpflow2_vs.dll" -Recurse -File | Select-Object -First 1
+        if (-not $src1 -or -not $src2) {
+            Write-Host "SVPflow DLLs not found inside archive -- check the archive structure." -ForegroundColor Red
             return
         }
         $null = New-Item -ItemType Directory -Force $vs_dir
-        Copy-Item $src1 $vs1_dst -Force
-        Copy-Item $src2 $vs2_dst -Force
-        Write-Host "vs1-x64.dll installed OK" -ForegroundColor Green
-        Write-Host "vs2-x64.dll installed OK" -ForegroundColor Green
+        Copy-Item $src1.FullName $vs1_dst -Force
+        Copy-Item $src2.FullName $vs2_dst -Force
+        if ($remote_tag) {
+            Set-Content -Path $version_file -Value $remote_tag -Encoding ASCII
+        }
+        Write-Host "svpflow1_vs.dll installed OK" -ForegroundColor Green
+        Write-Host "svpflow2_vs.dll installed OK" -ForegroundColor Green
     }
     catch {
-        Write-Host "VapourSynth interface download failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "You can manually download $archive_url, extract x64_vs\svpflow1_vs.dll and svpflow2_vs.dll and place them in portable_config\VapourSynth\ named vs1-x64.dll and vs2-x64.dll respectively." -ForegroundColor Yellow
+        Write-Host "SVPflow DLL download failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "You can manually download $archive_url, extract svpflow1_vs.dll and svpflow2_vs.dll and place them in portable_config\VapourSynth\." -ForegroundColor Yellow
     }
     finally {
         if (Test-Path $archive_path) { Remove-Item -Force $archive_path }
@@ -1619,6 +1763,7 @@ try {
 		Write-Host "Setting ACL on: $pc_dir" -ForegroundColor Yellow
 		& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
 	}
+    Stop-Mpv
     Upgrade-Mpv
     Get-VapourSynth
     Get-VSDLLs
