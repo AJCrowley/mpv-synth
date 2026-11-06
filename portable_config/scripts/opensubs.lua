@@ -46,6 +46,20 @@ if not opts.enabled then
 end
 
 local HELPER_SCRIPT = mp.command_native({"expand-path", "~~/"}) .. "\\helpers\\opensubs_helper.py"
+
+-- 2026-11-06: subliminal lives in the mpv-synth portable runtime. If the
+-- user hasn't overridden the subliminal path in script-opts/opensubs.conf,
+-- prefer the runtime's own launcher and its embedded python - the bare
+-- names resolve against PATH where a machine-wide python without
+-- subliminal may win (real case 2026-11-06).
+local runtime_dir = mp.command_native({"expand-path", "~~/VapourSynth"})
+local runtime_subliminal = utils.join_path(runtime_dir, "Scripts\\subliminal.exe")
+local runtime_python = utils.join_path(runtime_dir, "python.exe")
+local use_runtime = utils.file_info(runtime_subliminal) ~= nil
+if use_runtime and opts.subliminal == "subliminal" then
+    opts.subliminal = runtime_subliminal
+end
+local helper_python = (use_runtime and utils.file_info(runtime_python)) and runtime_python or "python"
 --=============================================================================
 -->>    SUBTITLE LANGUAGE:
 --=============================================================================
@@ -93,7 +107,7 @@ function list_subtitles(language)
     log("Searching for subtitles, please be patient...", 30)
     
     local a = {
-        'python',
+        helper_python,
         HELPER_SCRIPT,
         'list',
         mp.get_property("path"),
@@ -120,7 +134,7 @@ function download_selected_subtitle(subtitle, search_text)
     language = subtitle.language
 
     local result = utils.subprocess({ args = {
-        'python',
+        helper_python,
         HELPER_SCRIPT,
         'download',
         filename,
@@ -449,7 +463,7 @@ function run_manual_search(title_text, lang_code)
     log("Searching for '" .. title_text .. "' subtitles (" .. lang_code .. "), please be patient...", 30)
 
     local a = {
-        'python',
+        helper_python,
         HELPER_SCRIPT,
         'search',
         mp.get_property("path"),

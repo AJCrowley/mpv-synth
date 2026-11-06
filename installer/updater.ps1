@@ -772,6 +772,7 @@ function Upgrade-mpv-Files-120 {
                 "portable_config\VapourSynth\vapoursynth.vpy",
                 "portable_config\scripts\vapoursynth.lua",
                 "portable_config\script-opts\vapoursynth.conf",
+                "portable_config\scripts\opensubs.lua",
                 "portable_config\scripts\osc-simplified.lua"
             )
 
