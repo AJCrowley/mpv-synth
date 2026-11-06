@@ -256,7 +256,10 @@ function Upgrade-Python {
     #
 
     Write-Host "Upgrading pip..." -ForegroundColor Green
-    & $pycmd -m pip install --upgrade pip
+    # --no-cache-dir everywhere pip runs elevated: a cache written under the
+    # admin token poisons later non-elevated pip runs with [Errno 13] on
+    # Windows (the srt wheel case, real user 2026-11-06).
+    & $pycmd -m pip install --no-cache-dir --upgrade pip
 
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to upgrade pip"
@@ -267,10 +270,14 @@ function Upgrade-Python {
     #
 
     Write-Host "Upgrading subliminal..." -ForegroundColor Green
-    & $pycmd -m pip install --upgrade subliminal
+    & $pycmd -m pip install --no-cache-dir --upgrade subliminal
 
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to upgrade subliminal"
+        # Not fatal: subliminal powers subtitle downloading only. Newest
+        # python releases often lag on a dep wheel (pyyaml + Visual C++
+        # build tools was the real case on Python 3.15) and every run
+        # retries; aborting the whole updater for it is worse.
+        Write-Host "Failed to upgrade subliminal -- subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
     }
 
     Write-Host "Python environment updated." -ForegroundColor Green
@@ -316,8 +323,12 @@ function Ensure-PythonInstalled {
         try {
             Write-Host "Installing Python via winget..."
 
+            # Try the community source specifically: the msstore source
+            # demands a terms-agreement + region handshake mid-install and
+            # reliably 404s on elevated sessions (real case 2026-11-06).
             & $wingetExe install `
                 --id Python.Python.3 `
+                --source winget `
                 --silent `
                 --accept-package-agreements `
                 --accept-source-agreements
@@ -467,13 +478,13 @@ function Ensure-PythonPackage {
 
     Write-Host "Installing $PackageName..."
 
-    & $pycmd -m pip install --upgrade pip
+    & $pycmd -m pip install --no-cache-dir --upgrade pip
 
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to upgrade pip"
     }
 
-    & $pycmd -m pip install $PackageName
+    & $pycmd -m pip install --no-cache-dir $PackageName
 
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install $PackageName"
@@ -713,9 +724,6 @@ function Upgrade-mpv-Files-120 {
                 "portable_config\VapourSynth\vapoursynth.vpy",
                 "portable_config\scripts\vapoursynth.lua",
                 "portable_config\script-opts\vapoursynth.conf",
-                "portable_config\scripts\osc-simplified.lua",
-                "portable_config\scripts\opensubs.lua",
-                "portable_config\script-opts\opensubs.conf",
                 "portable_config\scripts\osc-simplified.lua"
             )
 
