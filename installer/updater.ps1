@@ -280,7 +280,45 @@ function Upgrade-Python {
         Write-Host "Failed to upgrade subliminal -- subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
     }
 
+    # 2026-11-06 decision: subliminal now lives in the PORTABLE runtime, not
+    # the system python. The system interpreter breaks the dependency tree
+    # whenever it is newer than dependency wheels (pyyaml has no Python 3.15
+    # wheels - pip tries to compile and demands Visual C++ Build Tools), and
+    # its elevated pip poisoned the shared cache. The embedded interpreter
+    # tracks VapourSynth's supported range so wheels exist for it.
+    Install-Subliminal-Portable
+
+    # Clean up the system-python attempt: older installs put subliminal in a
+    # machine-wide python that mpv-synth no longer owns. Harmless if absent.
+    try {
+        $oldsub = & $pycmd -m pip show subliminal 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Removing the machine-wide subliminal (moving into the mpv-synth runtime)..."
+            & $pycmd -m pip uninstall -y subliminal | Out-Null
+        }
+    }
+    catch { }
+
     Write-Host "Python environment updated." -ForegroundColor Green
+}
+
+function Install-Subliminal-Portable {
+    # Subliminal runs from the mpv-synth portable runtime (embedded python),
+    # never a machine-wide install. This is the one place a pip install is
+    # allowed to build against the tree's own interpreter.
+    $vs_dir = Join-Path (Get-Location).Path "portable_config\VapourSynth"
+    $py     = Join-Path $vs_dir "python.exe"
+    if (-not (Test-Path $py)) {
+        # The runtime may not exist yet (very first pass order) - the main
+        # flow calls this again after Get-VapourSynth, so just note it.
+        Write-Host "Portable runtime not present yet - subliminal will install after the VapourSynth step." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Installing subliminal into the mpv-synth runtime..." -ForegroundColor Green
+    & $py -m pip install --no-cache-dir --upgrade subliminal
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Subliminal install failed this pass - subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
+    }
 }
 function Ensure-PythonInstalled {
 
@@ -2037,6 +2075,9 @@ try {
     # Always refresh the env pointers, every pass, install or migration:
     # a once-wrong VSSCRIPT_PATH/VSSCRIPT_DLL otherwise outlives every run.
     Set-VSScriptPath
+    # Subliminal lives in the portable runtime; run after Get-VapourSynth
+    # so the embedded python it installs into always exists.
+    Install-Subliminal-Portable
 
     # --- Non-critical support-tool steps ------------------------------------
     # A failure in any of these used to abort the whole run BEFORE the
