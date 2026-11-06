@@ -4,6 +4,9 @@ local input = require "mp.input"
 
 local opts = {
     enabled = true,
+    -- yes/no: when "yes", automatically run download_subs whenever a file is
+    -- loaded that has no subtitle track (embedded or external).
+    auto_download = false,
     subliminal = "subliminal",
     osubname1 = "forced",
     osubcode1a = "en",
@@ -602,3 +605,25 @@ end
 mp.register_script_message('subtitle_browser', browse_subs)
 mp.register_script_message('manual_subtitle_search', manual_search)
 mp.register_script_message('download_subs', download_subs)
+
+-- Auto-download: when a file is loaded with no subtitle track, fetch one.
+-- (External sub files found by sub-auto are already in track-list by the
+-- time file-loaded fires, so they count as existing subtitle tracks.)
+mp.register_event("file-loaded", function()
+    if not opts.auto_download then
+        return
+    end
+
+    for _, track in ipairs(mp.get_property_native("track-list") or {}) do
+        if track.type == "sub" then
+            return
+        end
+    end
+
+    if not autosub_allowed() then
+        return
+    end
+
+    mp.msg.info("No subtitle track found, auto-downloading subtitles")
+    download_subs()
+end)
