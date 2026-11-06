@@ -315,7 +315,17 @@ function Install-Subliminal-Portable {
         return
     }
     Write-Host "Installing subliminal into the mpv-synth runtime..." -ForegroundColor Green
-    & $py -m pip install --no-cache-dir --upgrade subliminal
+    # srt (a subliminal dependency) is sdist-only on PyPI - no version in the
+    # 3.x line ships wheels (verified 2026-11-06) - so pip must build it.
+    # Give the embedded interpreter the build backend first, then install
+    # with --no-build-isolation: the isolated env on embedded pythons has
+    # failed to bootstrap setuptools (backend-unavailable, real case).
+    & $py -m pip install --no-cache-dir setuptools wheel
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Could not install the python build tools - subliminal cannot install this pass; will retry next run." -ForegroundColor Yellow
+        return
+    }
+    & $py -m pip install --no-cache-dir --no-build-isolation --upgrade subliminal
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Subliminal install failed this pass - subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
     }
