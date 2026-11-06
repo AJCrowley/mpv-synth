@@ -715,7 +715,8 @@ function Upgrade-mpv-Files-120 {
                 "portable_config\script-opts\vapoursynth.conf",
                 "portable_config\scripts\osc-simplified.lua",
                 "portable_config\scripts\opensubs.lua",
-                "portable_config\script-opts\opensubs.conf"
+                "portable_config\script-opts\opensubs.conf",
+                "portable_config\scripts\osc-simplified.lua"
             )
 
             foreach ($file in $files) {
