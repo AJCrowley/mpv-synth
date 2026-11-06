@@ -780,25 +780,30 @@ local function render_elements(master_ass)
 
             foH = elem_geo.h / 2
 
-            if pos then
-                xp = get_slider_ele_pos_for(element, pos)
-                local r = user_opts.seek_bar_knob_radius
-                
-                ass_draw_rr_h_cw(elem_ass, xp - r, foH - r,
-                                 xp + r, foH + r,
-                                 r, false)
-            end
-
             if seekRanges then
                 for _,range in pairs(seekRanges) do
                     local pstart = get_slider_ele_pos_for(element, range["start"])
                     local pend = get_slider_ele_pos_for(element, range["end"])
 
-                    -- rtype == "inverted"
-                    ass_draw_rr_h_ccw(elem_ass, pstart, (elem_geo.h / 2) - 1, pend,
-                                      (elem_geo.h / 2) + 1,
-                                      1, false)
+                    -- Drawn clockwise (+1) rather than counter-clockwise (-1).
+                    -- Inside the bar's hole (winding 0) both fill the same, but a
+                    -- ccw range would cancel the cw knob drawn later in this
+                    -- path, cutting a slit out of it.
+                    ass_draw_rr_h_cw(elem_ass, pstart, (elem_geo.h / 2) - 1, pend,
+                                     (elem_geo.h / 2) + 1,
+                                     1, false)
                 end
+            end
+
+            -- Knob: must be drawn while still in draw mode (before draw_stop),
+            -- otherwise the commands are emitted as plain text.
+            if pos then
+                xp = get_slider_ele_pos_for(element, pos)
+                local r = user_opts.seek_bar_knob_radius
+
+                ass_draw_rr_h_cw(elem_ass, xp - r, foH - r,
+                                 xp + r, foH + r,
+                                 r, false)
             end
 
             elem_ass:draw_stop()
