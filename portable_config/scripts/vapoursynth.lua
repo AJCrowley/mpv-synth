@@ -38,12 +38,12 @@ local options = {
     super_scale_up = 2,
     super_scale_down = 4,
     super_rc = 0,
-    super_lean = "no",   -- open-svpflow: GPU analyse builds its own pyramid parts (fast, more VRAM)
+    super_lean = "yes",   -- open-svpflow: GPU analyse builds its own pyramid parts (fast, more VRAM)
 
     -- analyse: motion search. analyse_quality seeds the granular keys;
     -- explicit keys in the conf win over the preset.
-    analyse_quality = "balanced",  -- fast | balanced | quality
-    analyse_vectors = nil,         -- 1 = fast, 3 = best (preset default)
+    analyse_quality = "quality",  -- fast | balanced | quality
+    analyse_vectors = 2,         -- 1 = fast, 3 = best (preset default)
     analyse_levels = nil,          -- 0 = automatic
     analyse_distance = nil,        -- negative = adaptive search, -8 = widest
     analyse_coarse_width = nil,    -- 1050 = typical
