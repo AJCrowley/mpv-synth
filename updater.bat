@@ -21,9 +21,10 @@ pushd %~dp0
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo Requesting administrator privileges...
-    :: Re-launch this exact batch file elevated, then exit the unelevated copy
+    :: Re-launch this exact batch file elevated, then exit the unelevated copy.
+    :: FIX: %1 is passed through so that /u (unattended) survives elevation.
     powershell -NoProfile -NoLogo -Command ^
-        "Start-Process -FilePath cmd.exe -ArgumentList '/c pushd ""%~dp0"" && ""%~f0""' -Verb RunAs -Wait"
+        "Start-Process -FilePath cmd.exe -ArgumentList '/c pushd ""%~dp0"" && ""%~f0"" %1' -Verb RunAs -Wait"
     exit /b
 )
 
