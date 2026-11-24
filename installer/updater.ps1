@@ -442,6 +442,7 @@ function Upgrade-mpv-Files-121 {
     }
     else {
         Copy-ReleaseFiles @(
+            "updater.bat",
             "portable_config\input.conf",
             "portable_config\scripts\playback-speed.lua",
             "portable_config\script-opts\playback-speed.conf"
