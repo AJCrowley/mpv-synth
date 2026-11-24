@@ -1,12 +1,44 @@
 param(
     [switch]$Unattended,
-	[switch]$Installing
+    [switch]$Installing
 )
-$UpdaterVersion = [version]"1.2.0"
-$fallback7z = Join-Path (Get-Location) "\7z\7zr.exe"
-$useragent  = "mpv-win-updater"
-$RegistryRoot = "HKLM:\SOFTWARE\mpv-synth"
+
+# ---------------------------------------------------------------------------
+# Root directory. Everything (mpv.exe, portable_config, settings.xml, ...) is
+# resolved against ONE root so the script behaves the same no matter which
+# directory it was started from. updater.bat does pushd to the install root,
+# but we do not rely on that: if the current directory does not look like an
+# install, try the script's own folder and its parent (installer\..).
+# ---------------------------------------------------------------------------
+function Resolve-RootDir {
+    $candidates = @((Get-Location).Path)
+    if ($PSScriptRoot) {
+        $candidates += $PSScriptRoot
+        $candidates += (Split-Path -Parent $PSScriptRoot)
+    }
+    foreach ($c in $candidates) {
+        if ($c -and ((Test-Path (Join-Path $c "mpv.exe")) -or (Test-Path (Join-Path $c "portable_config")))) {
+            return $c
+        }
+    }
+    return (Get-Location).Path
+}
+$script:Root = Resolve-RootDir
+Set-Location -LiteralPath $script:Root
+# Native tools (7z, yt-dlp, mpv, ffmpeg) use the PROCESS directory, which
+# Set-Location does not change. Keep both in sync.
+[Environment]::CurrentDirectory = $script:Root
+
+$UpdaterVersion = [version]"1.2.1"
+$fallback7z     = Join-Path $script:Root "7z\7zr.exe"
+$useragent      = "mpv-win-updater"
+$RegistryRoot   = "HKLM:\SOFTWARE\mpv-synth"
 $script:ReleaseDownloaded = $false
+$script:ReleaseRoot       = $null
+$script:temp_zip          = Join-Path $env:TEMP "mpv-synth.zip"
+$script:extract_dir       = Join-Path $env:TEMP "mpv_synth_extract"
+# Used only when the GitHub API cannot be reached.
+$script:FallbackVapourSynthTag = "R82"
 
 # ===========================================================================
 # TEST SWITCH -- run the 1.2.0 migration directly, ignoring the version
@@ -20,19 +52,26 @@ $script:ReleaseDownloaded = $false
 # ===========================================================================
 $script:ForceMigrationsOnNextRun = $false
 
+# Files inside portable_config\VapourSynth that must survive any wipe-reinstall.
+# Everything else in the folder is runtime data that the recipe recreates.
+$script:UsersVapourSynthArtifacts = @(
+    "vapoursynth.vpy",
+    "vapoursynth_fps.txt",
+    "vapoursynth_current_path.txt",
+    "vapoursynth_params.json",
+    "svpflow1_vs.dll",
+    "svpflow2_vs.dll",
+    "svpflow_version.txt",
+    "vapoursynth_runtime.txt"
+)
+
 # ---------------------------------------------------------------------------
 # Registry helpers
+# Failures here MUST be loud (-ErrorAction Stop): a silently unwritable
+# version key makes every migration re-run on every launch.
 # ---------------------------------------------------------------------------
 
-function Ensure-RegistryRoot {
-    if (-not (Test-Path $RegistryRoot)) {
-        New-Item -Path $RegistryRoot -Force | Out-Null
-    }
-}
-
 function Get-InstalledVersion {
-    Ensure-RegistryRoot
-
     try {
         $v = Get-ItemPropertyValue -Path $RegistryRoot -Name "LastUpdateVersion" -ErrorAction Stop
         return [version]$v
@@ -43,11 +82,80 @@ function Get-InstalledVersion {
 }
 
 function Set-InstalledVersion([version]$Version) {
-    Ensure-RegistryRoot
-
+    if (-not (Test-Path $RegistryRoot)) {
+        New-Item -Path $RegistryRoot -Force -ErrorAction Stop | Out-Null
+    }
     Set-ItemProperty -Path $RegistryRoot `
                      -Name "LastUpdateVersion" `
-                     -Value $Version.ToString()
+                     -Value $Version.ToString() `
+                     -ErrorAction Stop
+}
+
+# ---------------------------------------------------------------------------
+# Release copy helpers (shared by every file-copying migration)
+# ---------------------------------------------------------------------------
+
+# If the user's copy differs from the release copy, keep theirs as <name>.bak
+# before it is overwritten.
+function Backup-IfDifferent([string]$Source, [string]$Target) {
+    if (-not (Test-Path -LiteralPath $Target)) { return }
+    try {
+        $a = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+        $b = (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash
+        if ($a -ne $b) {
+            Copy-Item -LiteralPath $Target -Destination "$Target.bak" -Force
+            Write-Host "Your existing $(Split-Path $Target -Leaf) was backed up as $(Split-Path $Target -Leaf).bak" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Could not back up $Target : $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+# Copy specific files from the downloaded release into the install. *.conf
+# files are user-editable, so they are backed up first. Any problem throws,
+# so a failed migration is NOT recorded as done.
+function Copy-ReleaseFiles {
+    param([string[]]$Files)
+
+    if (-not $script:ReleaseDownloaded) { Download-Latest-Release }
+    $root = $script:ReleaseRoot.FullName
+
+    foreach ($file in $Files) {
+        $source = Join-Path $root $file
+        $target = Join-Path $script:Root $file
+
+        if (-not (Test-Path -LiteralPath $source)) {
+            throw "$file not found in release at $source"
+        }
+
+        $targetDir = Split-Path $target -Parent
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+        }
+
+        if ((Split-Path $file -Leaf) -like "*.conf") {
+            Backup-IfDifferent $source $target
+        }
+
+        Copy-Item -LiteralPath $source -Destination $target -Force
+        Write-Host "Updated $file" -ForegroundColor Green
+    }
+}
+
+# Copy the whole release over the install (old 1.1.0 / 1.1.3 behaviour),
+# backing up any *.conf the user changed.
+function Copy-ReleaseTree {
+    if (-not $script:ReleaseDownloaded) { Download-Latest-Release }
+    $root = $script:ReleaseRoot.FullName
+
+    Get-ChildItem -LiteralPath $root -Recurse -File -Filter "*.conf" -ErrorAction SilentlyContinue | ForEach-Object {
+        $rel = $_.FullName.Substring($root.Length).TrimStart('\')
+        Backup-IfDifferent $_.FullName (Join-Path $script:Root $rel)
+    }
+
+    Write-Host "Copying files..." -ForegroundColor Green
+    Copy-Item -Path (Join-Path $root '*') -Destination $script:Root -Recurse -Force
 }
 
 # ---------------------------------------------------------------------------
@@ -55,16 +163,17 @@ function Set-InstalledVersion([version]$Version) {
 # ---------------------------------------------------------------------------
 $migrations = @(
     @{
-    Version = [version]"1.1.0"
-    Script = {
-		Ensure-Green-Light @"
+        Version = [version]"1.1.0"
+        Script = {
+            Ensure-Green-Light @"
 Due to significant changes, your config files will have to be updated to allow new features to work. Press 'y' to proceed, or press 'n' and back up your existing config files so you don't lose your custom settings and can integrate your personalised settings into the new config before proceeding with update...
 "@
-		Upgrade-mpv-Files-110
-        Ensure-PythonInstalled
-        Ensure-PythonPackage "subliminal"
-		Clean-Downloaded
-		Final-Message @"
+            Upgrade-mpv-Files-110
+            Ensure-PythonInstalled
+            # subliminal lives in the portable runtime; on a legacy tree the
+            # runtime does not exist yet and this is picked up after 1.2.0.
+            Install-Subliminal-Portable
+            Final-Message @"
 Upgrade complete.
 
 Go into your portable_config folder and update mpv.conf with your language preferences.
@@ -98,14 +207,16 @@ Press Alt+t to auto-download the best match.
 
 Future updates are now versioned and any specific changes that need to be made to bring an older version up to date are handled automatically by the updater.
 
+Your previous config files were kept next to the new ones with a .bak extension where they differed.
+
 Thanks for using mpv-synth!
 "@
+        }
     }
-}
-@{
-    Version = [version]"1.1.1"
-    Script = {
-		Final-Message @"
+    @{
+        Version = [version]"1.1.1"
+        Script = {
+            Final-Message @"
 Upgrade complete.
 
 If you have something better than stereo sound, go into your portable_config folder and update mpv.conf to match your sound system.
@@ -120,8 +231,8 @@ I hope to build a better UI for updating and managing configurations for people 
 
 Thanks for using mpv-synth!
 "@
+        }
     }
-}
     @{
         Version = [version]"1.1.3"
         Script = {
@@ -135,7 +246,6 @@ Thanks for using mpv-synth!
 "@
         }
     }
-
     @{
         Version = [version]"1.1.4"
         Script = {
@@ -153,7 +263,7 @@ Thanks for using mpv-synth!
             Upgrade-mpv-Files-115
         }
     }
-	@{
+    @{
         Version = [version]"1.1.6"
         Script = {
             Upgrade-mpv-Files-116
@@ -173,9 +283,22 @@ Upgrade complete.
 
 SVPflow now uses the open-svpflow DLLs (svpflow1_vs.dll and svpflow2_vs.dll), and vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf have been updated.
 
-The VapourSynth runtime itself was also upgraded to the latest stable release (the officially supported pip layout), and the open-svpflow plugins were installed into it via pip. Your frame-rate preferences and the svpflow DLLs were kept.
+The VapourSynth runtime itself was also upgraded to the latest stable release (the officially supported pip layout), and the open-svpflow plugins were installed into it via pip. The svpflow DLLs were kept, and your previous vapoursynth.conf was saved as vapoursynth.conf.bak if it differed from the new one, so you can copy your frame-rate preferences across.
 
 Interpolation behaviour is now controlled from portable_config\script-opts\vapoursynth.conf: every knob (algorithm, motion search quality, masks, scene-change limits, the open-svpflow extras like dedup and the still-text mask, even CPU vs GPU rendering) is documented there and takes effect on the next file you play - no restart needed.
+
+Thanks for using mpv-synth!
+"@
+        }
+    }
+    @{
+        Version = [version]"1.2.1"
+        Script = {
+            Upgrade-mpv-Files-121
+            Final-Message @"
+Upgrade complete.
+
+Playback speed scripts were added and input.conf was updated. If you had customised input.conf, your previous copy was saved as input.conf.bak.
 
 Thanks for using mpv-synth!
 "@
@@ -186,277 +309,217 @@ Thanks for using mpv-synth!
 # ---
 # Version update specific functions
 # ---
-function Upgrade-Python {
 
-    Write-Host ""
-    Write-Host "Checking Python..."
-
-    $pycmd = Get-PythonCommand
-
-    # Install Python if missing
-    if (-not $pycmd) {
-        Ensure-PythonInstalled
-        $pycmd = Get-PythonCommand
-    }
-
-    #
-    # Upgrade Python itself
-    #
-
-    $installedVersion = [version]((& $pycmd --version 2>&1) -replace '[^\d.]','')
-
-    $latestUrl, $latestVersion = Get-LatestPythonInstaller
-    $latestVersion = [version]$latestVersion
-
-    if ($latestVersion -gt $installedVersion) {
-
-        Write-Host "Upgrading Python $installedVersion -> $latestVersion" -ForegroundColor Green
-
-        $installer = Join-Path $env:TEMP "python-$latestVersion-amd64.exe"
-
-        Invoke-WebRequest `
-            -Uri $latestUrl `
-            -OutFile $installer `
-            -UserAgent $useragent
-
-        $proc = Start-Process -FilePath $installer -ArgumentList @(
-            "/quiet",
-            "InstallAllUsers=1",
-            "PrependPath=1",
-            "Include_launcher=1",
-            "Include_test=0"
-        ) -Wait -PassThru
-
-        if ($proc.ExitCode -ne 0) {
-            throw "Python installer exited with code $($proc.ExitCode)"
-        }
-
-        Remove-Item $installer -Force -ErrorAction SilentlyContinue
-
-        Refresh-EnvironmentPath
-
-        $pycmd = Get-PythonCommand
-
-        if (-not $pycmd) {
-            throw "Python could not be located after upgrade."
-        }
-
-        $installedVersion = [version]((& $pycmd --version 2>&1) -replace '[^\d.]','')
-
-        if ($installedVersion -lt $latestVersion) {
-            throw "Python upgrade appears to have failed."
-        }
-    }
-    else {
-        Write-Host "Python is already up to date." -ForegroundColor Green
-    }
-
-    #
-    # Upgrade pip
-    #
-
-    Write-Host "Upgrading pip..." -ForegroundColor Green
-    # --no-cache-dir everywhere pip runs elevated: a cache written under the
-    # admin token poisons later non-elevated pip runs with [Errno 13] on
-    # Windows (the srt wheel case, real user 2026-11-06).
-    & $pycmd -m pip install --no-cache-dir --upgrade pip
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to upgrade pip"
-    }
-
-    #
-    # Upgrade subliminal
-    #
-
-    Write-Host "Upgrading subliminal..." -ForegroundColor Green
-    & $pycmd -m pip install --no-cache-dir --upgrade subliminal
-
-    if ($LASTEXITCODE -ne 0) {
-        # Not fatal: subliminal powers subtitle downloading only. Newest
-        # python releases often lag on a dep wheel (pyyaml + Visual C++
-        # build tools was the real case on Python 3.15) and every run
-        # retries; aborting the whole updater for it is worse.
-        Write-Host "Failed to upgrade subliminal -- subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
-    }
-
-    # 2026-11-06 decision: subliminal now lives in the PORTABLE runtime, not
-    # the system python. The system interpreter breaks the dependency tree
-    # whenever it is newer than dependency wheels (pyyaml has no Python 3.15
-    # wheels - pip tries to compile and demands Visual C++ Build Tools), and
-    # its elevated pip poisoned the shared cache. The embedded interpreter
-    # tracks VapourSynth's supported range so wheels exist for it.
-    Install-Subliminal-Portable
-
-    # Clean up the system-python attempt: older installs put subliminal in a
-    # machine-wide python that mpv-synth no longer owns. Harmless if absent.
-    try {
-        $oldsub = & $pycmd -m pip show subliminal 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Removing the machine-wide subliminal (moving into the mpv-synth runtime)..."
-            & $pycmd -m pip uninstall -y subliminal | Out-Null
-        }
-    }
-    catch { }
-
-    Write-Host "Python environment updated." -ForegroundColor Green
+function Upgrade-mpv-Files-110 {
+    Write-Host "Updating mpv-synth..." -ForegroundColor Green
+    Copy-ReleaseTree
+    Write-Host "Update complete." -ForegroundColor Green
 }
 
-function Install-Subliminal-Portable {
-    # Subliminal runs from the mpv-synth portable runtime (embedded python),
-    # never a machine-wide install. This is the one place a pip install is
-    # allowed to build against the tree's own interpreter.
-    $vs_dir = Join-Path (Get-Location).Path "portable_config\VapourSynth"
-    $py     = Join-Path $vs_dir "python.exe"
-    if (-not (Test-Path $py)) {
-        # The runtime may not exist yet (very first pass order) - the main
-        # flow calls this again after Get-VapourSynth, so just note it.
-        Write-Host "Portable runtime not present yet - subliminal will install after the VapourSynth step." -ForegroundColor Yellow
-        return
-    }
-    Write-Host "Installing subliminal into the mpv-synth runtime..." -ForegroundColor Green
-    # srt (a subliminal dependency) is sdist-only on PyPI - no version in the
-    # 3.x line ships wheels (verified 2026-11-06) - so pip must build it.
-    # Give the embedded interpreter the build backend first, then install
-    # with --no-build-isolation: the isolated env on embedded pythons has
-    # failed to bootstrap setuptools (backend-unavailable, real case).
-    & $py -m pip install --no-cache-dir setuptools wheel
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Could not install the python build tools - subliminal cannot install this pass; will retry next run." -ForegroundColor Yellow
-        return
-    }
-    & $py -m pip install --no-cache-dir --no-build-isolation --upgrade subliminal
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Subliminal install failed this pass - subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
-    }
+function Upgrade-mpv-Files-113 {
+    Write-Host "Updating mpv-synth..." -ForegroundColor Green
+    if (-not $script:ReleaseDownloaded) { Download-Latest-Release }
+
+    Remove-Item -Path (Join-Path $script:Root "portable_config\scripts\osc.lua") -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $script:Root "portable_config\script-opts\osc.conf") -Force -ErrorAction SilentlyContinue
+
+    Copy-ReleaseTree
+    Write-Host "Update complete." -ForegroundColor Green
 }
-function Ensure-PythonInstalled {
 
-    Write-Host ""
-    Write-Host "Checking for Python 3..."
+function Upgrade-mpv-Files-114 {
+    Write-Host "Updating thumbfast.lua..." -ForegroundColor Green
+    Copy-ReleaseFiles @("portable_config\scripts\thumbfast.lua")
+    Write-Host "Update complete." -ForegroundColor Green
+}
 
-    $pycmd = Get-PythonCommand
+function Upgrade-mpv-Files-115 {
+    Write-Host "Updating OpenSubs..." -ForegroundColor Green
+    # (The old `yt-dlp --update-to nightly` call was removed: a bare name is not
+    # resolved from the current directory, so it threw before any file was
+    # copied, and Upgrade-Ytplugin already updates yt-dlp on every run.)
+    Copy-ReleaseFiles @(
+        "portable_config\scripts\opensubs.lua",
+        "portable_config\script-opts\opensubs.conf",
+        "portable_config\helpers\opensubs_helper.py",
+        "portable_config\helpers\fix_opensubs.ps1",
+        "portable_config\input.conf"
+    )
+    Write-Host "Update complete." -ForegroundColor Green
+}
 
-    if ($pycmd) {
-        $pyVersion = (& $pycmd --version 2>&1)
-        Write-Host "$pyVersion already installed."
-        return
-    }
+function Upgrade-mpv-Files-116 {
+    Write-Host "Updating Browser extension, please manually uninstall and reinstall from your browser's extensions..." -ForegroundColor Green
+    Copy-ReleaseFiles @(
+        "installer\mpv-synth-extension.zip",
+        "installer\updater.ps1",
+        "portable_config\script-opts\vapoursynth.conf",
+        "portable_config\scripts\vapoursynth.lua"
+    )
+    Write-Host "Update complete." -ForegroundColor Green
+}
 
-    Write-Host "Python not found."
+function Upgrade-mpv-Files-120 {
 
-    $installedOk = $false
+    Write-Host "Upgrading SVPflow + VapourSynth runtime, vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf..." -ForegroundColor Green
 
-    # Try winget first, but don't trust it blindly. Under an elevated /
-    # "Run as Administrator" session, `Get-Command winget` frequently fails
-    # to resolve even when winget IS installed, because winget.exe is an App
-    # Execution Alias tied to the interactively logged-in user's profile and
-    # doesn't reliably carry over to a separate elevated token. Check the
-    # known alias path directly as well before giving up on winget.
-    $wingetExe = $null
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-
-    if ($winget) {
-        $wingetExe = $winget.Source
+    # TEST SWITCH: in force mode the release may be older than this updater
+    # (the release is only rebuilt when Kris publishes), so the files already
+    # in the tree are the freshest ones -- keep them and just fix the runtime.
+    if ($script:ForceMigrationsOnNextRun) {
+        Write-Host "Test-switch active: keeping the vapoursynth.vpy / .lua / .conf already in this tree (no release download)." -ForegroundColor Yellow
     }
     else {
-        $wingetAliasPath = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"
-        if (Test-Path $wingetAliasPath) {
-            $wingetExe = $wingetAliasPath
-        }
+        # Runtime support files from the latest release (vapoursynth.conf is
+        # backed up first if the user changed it).
+        Copy-ReleaseFiles @(
+            "portable_config\VapourSynth\vapoursynth.vpy",
+            "portable_config\scripts\vapoursynth.lua",
+            "portable_config\script-opts\vapoursynth.conf",
+            "portable_config\scripts\opensubs.lua",
+            "portable_config\scripts\osc-simplified.lua"
+        )
     }
 
-    if ($wingetExe) {
+    # Replace the VapourSynth runtime itself. Anything older than the R80+ pip
+    # layout cannot run the new open-svpflow plugins, and a partial manual
+    # wheel copy leaves a mixed tree. The old runtime is only wiped once the
+    # new one has been built successfully (see Install-VapourSynth-Runtime).
+    $vs_dir = Join-Path $script:Root "portable_config\VapourSynth"
 
-        try {
-            Write-Host "Installing Python via winget..."
+    if (Test-VapourSynth-Healthy $vs_dir) {
+        Write-Host "VapourSynth R80+ runtime already in place -- skipping reinstall." -ForegroundColor Green
+    }
+    else {
+        $null = New-Item -ItemType Directory -Force $vs_dir
+        Install-VapourSynth-Runtime $vs_dir -ResetFirst
+    }
 
-            # Try the community source specifically: the msstore source
-            # demands a terms-agreement + region handshake mid-install and
-            # reliably 404s on elevated sessions (real case 2026-11-06).
-            & $wingetExe install `
-                --id Python.Python.3 `
-                --source winget `
-                --silent `
-                --accept-package-agreements `
-                --accept-source-agreements
+    # Always refresh the pointers, healthy tree or fresh install.
+    Set-VSScriptPath
 
-            if ($LASTEXITCODE -ne 0) {
-                throw "winget failed with exit code $LASTEXITCODE"
-            }
+    # Make sure the SVPflow DLLs are current (open-svpflow releases).
+    Get-VSDLLs
 
-            $maxAttempts = 10
+    # The runtime may have just been created: install subliminal if it is not there yet.
+    Install-Subliminal-Portable -OnlyIfMissing
 
-            for ($i = 0; $i -lt $maxAttempts; $i++) {
+    # If the vpy still references the ancient DLL names, keep the old files.
+    $vpy = Join-Path $vs_dir "vapoursynth.vpy"
+    if (Test-Path $vpy) {
+        if (Select-String -Path $vpy -Pattern "vs1-x64\.dll|vs2-x64\.dll" -Quiet) {
+            Write-Host "Warning: vapoursynth.vpy still references vs1-x64.dll / vs2-x64.dll. Keeping the old DLLs so interpolation keeps working." -ForegroundColor Yellow
+            return
+        }
 
-                Refresh-EnvironmentPath
+        # Remove the old renamed DLLs, but only once the new ones are confirmed present.
+        $new1 = Join-Path $vs_dir "svpflow1_vs.dll"
+        $new2 = Join-Path $vs_dir "svpflow2_vs.dll"
 
-                if (Get-PythonCommand) {
-                    $installedOk = $true
-                    break
+        if ((Test-Path $new1) -and (Test-Path $new2)) {
+            foreach ($old in @("vs1-x64.dll", "vs2-x64.dll")) {
+                $oldPath = Join-Path $vs_dir $old
+                if (Test-Path $oldPath) {
+                    Remove-Item -Path $oldPath -Force -ErrorAction Stop
+                    Write-Host "Removed old $old" -ForegroundColor Green
                 }
-
-                Start-Sleep -Seconds 2
             }
         }
-        catch {
-            Write-Host "winget install did not succeed: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    }
-    else {
-        Write-Host "winget is not available in this session." -ForegroundColor Yellow
-    }
-
-    if (-not $installedOk) {
-
-        Write-Host "Falling back to a direct download of the official Python installer..." -ForegroundColor Yellow
-
-        try {
-            Install-PythonDirect
-            Refresh-EnvironmentPath
-
-            if (Get-PythonCommand) {
-                $installedOk = $true
-            }
-        }
-        catch {
-            throw "Python installation failed: $_"
+        else {
+            Write-Host "Warning: new svpflow DLLs not found in $vs_dir -- keeping old vs1-x64.dll / vs2-x64.dll." -ForegroundColor Yellow
         }
     }
 
-    $pycmd = Get-PythonCommand
-
-    if (-not $pycmd) {
-        throw "Python installation completed but python.exe is still unavailable."
-    }
-
-    $pyVersion = (& $pycmd --version 2>&1)
-    Write-Host "$pyVersion installed successfully."
+    Write-Host "Update complete." -ForegroundColor Green
 }
 
+function Upgrade-mpv-Files-121 {
+
+    Write-Host "Adding playback speed scripts and updating input.conf..." -ForegroundColor Green
+
+    if ($script:ForceMigrationsOnNextRun) {
+        Write-Host "Test-switch active: keeping the input.conf / playback-speed files already in this tree (no release download)." -ForegroundColor Yellow
+    }
+    else {
+        Copy-ReleaseFiles @(
+            "portable_config\input.conf",
+            "portable_config\scripts\playback-speed.lua",
+            "portable_config\script-opts\playback-speed.conf"
+        )
+    }
+
+    Write-Host "Update complete." -ForegroundColor Green
+}
+
+# ---------------------------------------------------------------------------
+# Python helpers
+# ---------------------------------------------------------------------------
+
+# True only for a genuine Python 3 interpreter (rejects the Microsoft Store
+# "python.exe" stub, which exists on PATH but just opens the Store).
+function Test-RealPython([string]$Cmd) {
+    try {
+        $out = (& $Cmd --version 2>&1 | Out-String).Trim()
+        return (($LASTEXITCODE -eq 0) -and ($out -match "^Python 3\."))
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-PythonCommand {
+
+    # portable_config\VapourSynth\python.exe is a stripped-down "embeddable"
+    # Python installed purely for VapourSynth/mpv's own use. It must never be
+    # picked as the general-purpose interpreter, however it resolves on PATH.
+    $vsPythonDir = Join-Path $script:Root "portable_config\VapourSynth"
+
+    function Test-IsVsPython($path) {
+        if (-not $path) { return $false }
+        return $path.StartsWith($vsPythonDir, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+
+    foreach ($name in @("python", "py")) {
+        foreach ($cmd in @(Get-Command $name -All -CommandType Application -ErrorAction SilentlyContinue)) {
+            if ($cmd.Source -like "*\WindowsApps\*") { continue }   # Store stub
+            if (Test-IsVsPython $cmd.Source) { continue }
+            if (Test-RealPython $cmd.Source) { return $cmd.Source }
+        }
+    }
+
+    # PATH may not have refreshed in this session yet (just after a silent
+    # install): check the well-known install locations directly.
+    $candidates = @(
+        (Get-ChildItem "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue),
+        (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue)
+    ) | Where-Object { $_ -and -not (Test-IsVsPython $_.FullName) } | Sort-Object FullName -Descending
+
+    foreach ($c in $candidates) {
+        if (Test-RealPython $c.FullName) { return $c.FullName }
+    }
+
+    return $null
+}
+
+# Newest python.org release that actually has a Windows installer. Reads the
+# FTP directory index (one request) and then probes only the newest few,
+# instead of hundreds of blind HEAD requests.
 function Get-LatestPythonInstaller {
+    $index = Invoke-WebRequestWithRetry -Uri "https://www.python.org/ftp/python/"
+    $versions = [regex]::Matches([string]$index.Content, 'href="(3)\.(\d+)\.(\d+)/"') |
+        ForEach-Object { [version]("{0}.{1}.{2}" -f $_.Groups[1].Value, $_.Groups[2].Value, $_.Groups[3].Value) } |
+        Sort-Object -Descending -Unique |
+        Select-Object -First 25
 
-    # Discover the latest available Python 3.x release by probing python.org.
-
-    for ($minor = 40; $minor -ge 10; $minor--) {
-
-        for ($patch = 20; $patch -ge 0; $patch--) {
-
-            $version = "3.$minor.$patch"
-            $url = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
-
-            try {
-                Invoke-WebRequest `
-                    -Uri $url `
-                    -Method Head `
-                    -UseBasicParsing `
-                    -UserAgent $useragent | Out-Null
-
-                return $url, $version
-            }
-            catch {
-                # Version doesn't exist, try the next one.
-            }
+    foreach ($v in $versions) {
+        $version = $v.ToString()
+        $url = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
+        try {
+            Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -UserAgent $useragent | Out-Null
+            return $url, $version
+        }
+        catch {
+            # Directory exists but has no final installer (pre-release); try the next one.
         }
     }
 
@@ -479,464 +542,153 @@ function Install-PythonDirect {
         "Include_test=0"
     ) -Wait -PassThru
 
+    Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
     if ($proc.ExitCode -ne 0) {
         throw "Python installer exited with code $($proc.ExitCode)"
     }
-
-    Remove-Item $installer -Force -ErrorAction SilentlyContinue
 }
 
 function Refresh-EnvironmentPath {
-
-    $machinePath = [Environment]::GetEnvironmentVariable(
-        "Path",
-        "Machine"
-    )
-
-    $userPath = [Environment]::GetEnvironmentVariable(
-        "Path",
-        "User"
-    )
-
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath    = [Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path = "$machinePath;$userPath"
 }
 
-function Ensure-PythonPackage {
-
-    param(
-        [string]$PackageName
-    )
+# Installs a system Python only if none is present. (winget was dropped:
+# `--id Python.Python.3` is ambiguous and always failed, and winget is
+# unreliable in elevated sessions. The official installer is deterministic.)
+function Ensure-PythonInstalled {
 
     Write-Host ""
-    Write-Host "Checking Python package: $PackageName"
-	
-	$pycmd = Get-PythonCommand
+    Write-Host "Checking for Python 3..."
 
-    if (-not $pycmd) {
-        throw "Python is required to install '$PackageName' but was not found."
-    }
-
-    $installed = & $pycmd -m pip show $PackageName 2>$null
-
-    if ($LASTEXITCODE -eq 0) {
-
-        Write-Host "$PackageName already installed."
+    $pycmd = Get-PythonCommand
+    if ($pycmd) {
+        Write-Host "$((& $pycmd --version 2>&1 | Out-String).Trim()) already installed."
         return
     }
 
-    Write-Host "Installing $PackageName..."
+    Write-Host "Python not found -- installing from python.org..." -ForegroundColor Yellow
+    Install-PythonDirect
+    Refresh-EnvironmentPath
 
-    & $pycmd -m pip install --no-cache-dir --upgrade pip
+    $pycmd = Get-PythonCommand
+    if (-not $pycmd) {
+        throw "Python installation completed but python.exe is still unavailable."
+    }
+    Write-Host "$((& $pycmd --version 2>&1 | Out-String).Trim()) installed successfully."
+}
 
+# Subliminal runs from the mpv-synth portable runtime (embedded python), never
+# a machine-wide install: a system interpreter newer than the dependency
+# wheels (pyyaml on 3.15) needs a C++ toolchain, and an elevated pip poisons
+# the shared cache. Non-fatal: it only powers subtitle downloading.
+function Install-Subliminal-Portable {
+    param([switch]$OnlyIfMissing)
+
+    $vs_dir = Join-Path $script:Root "portable_config\VapourSynth"
+    $py     = Join-Path $vs_dir "python.exe"
+
+    if (-not (Test-Path $py)) {
+        Write-Host "Portable runtime not present yet - subliminal will install once VapourSynth is set up." -ForegroundColor Yellow
+        return
+    }
+
+    if ($OnlyIfMissing) {
+        $null = & $py -m pip show subliminal 2>&1
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+
+    Write-Host "Installing subliminal into the mpv-synth runtime..." -ForegroundColor Green
+
+    # srt (a subliminal dependency) is sdist-only on PyPI, so pip must build
+    # it. Give the embedded interpreter the build backend first, then use
+    # --no-build-isolation (the isolated env fails to bootstrap setuptools on
+    # embedded pythons). --no-cache-dir: an elevated pip cache poisons later
+    # non-elevated runs with [Errno 13].
+    & $py -m pip install --no-cache-dir setuptools wheel
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to upgrade pip"
+        Write-Host "Could not install the python build tools - subliminal cannot install this pass; will retry next run." -ForegroundColor Yellow
+        return
     }
-
-    & $pycmd -m pip install --no-cache-dir $PackageName
-
+    & $py -m pip install --no-cache-dir --no-build-isolation --upgrade subliminal
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install $PackageName"
+        Write-Host "Subliminal install failed this pass - subtitle downloading may not work; will retry next run." -ForegroundColor Yellow
     }
-
-    Write-Host "$PackageName installed successfully."
 }
 
-function Upgrade-mpv-Files-110 {
+# Replaces the old Upgrade-Python. Nothing in mpv-synth uses the system Python
+# for packages any more, so it is only ensured to exist (never upgraded), and
+# any machine-wide subliminal left by older versions is removed.
+function Update-PythonEnvironment {
 
-    Write-Host "Updating mpv-synth..." -ForegroundColor Green
+    Write-Host ""
+    try { Ensure-PythonInstalled }
+    catch { Write-Host "System Python step failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
     try {
-
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
+        $pycmd = Get-PythonCommand
+        if ($pycmd) {
+            $null = & $pycmd -m pip show subliminal 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Removing the machine-wide subliminal (it now lives in the mpv-synth runtime)..."
+                & $pycmd -m pip uninstall -y subliminal | Out-Null
+            }
         }
-
-        $root = $script:ReleaseRoot
-        $destination = (Get-Location).Path
-
-        Write-Host "Copying files..." -ForegroundColor Green
-
-        Copy-Item `
-            -Path (Join-Path $root.FullName '*') `
-            -Destination $destination `
-            -Recurse `
-            -Force
-
-        Write-Host "Update complete." -ForegroundColor Green
     }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
+    catch { }
+
+    Install-Subliminal-Portable
+    Write-Host "Python environment updated." -ForegroundColor Green
 }
 
-function Upgrade-mpv-Files-113 {
-
-    Write-Host "Updating mpv-synth..." -ForegroundColor Green
-
-    try {
-
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
-        }
-
-        $root = $script:ReleaseRoot
-        $destination = (Get-Location).Path
-		Remove-Item -Path (Join-Path $destination "portable_config\scripts\osc.lua") -Force -ErrorAction SilentlyContinue
-		Remove-Item -Path (Join-Path $destination "portable_config\script-opts\osc.conf") -Force -ErrorAction SilentlyContinue
-
-        Write-Host "Copying files..." -ForegroundColor Green
-
-        Copy-Item `
-            -Path (Join-Path $root.FullName '*') `
-            -Destination $destination `
-            -Recurse `
-            -Force
-
-        Write-Host "Update complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-function Upgrade-mpv-Files-114 {
-
-    Write-Host "Updating thumbfast.lua..." -ForegroundColor Green
-
-    try {
-
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
-        }
-
-        $root = $script:ReleaseRoot
-        $destination = (Get-Location).Path
-
-        $source = Join-Path $root.FullName "portable_config\scripts\thumbfast.lua"
-        $target = Join-Path $destination "portable_config\scripts\thumbfast.lua"
-
-        if (-not (Test-Path $source)) {
-            throw "thumbfast.lua not found in release at $source"
-        }
-
-        Write-Host "Copying thumbfast.lua..." -ForegroundColor Green
-
-        $targetDir = Split-Path $target -Parent
-        if (-not (Test-Path $targetDir)) {
-            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        }
-
-        Copy-Item -Path $source -Destination $target -Force
-
-        Write-Host "Update complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-function Upgrade-mpv-Files-115 {
-
-    Write-Host "Updating OpenSubs..." -ForegroundColor Green
-
-    try {
-
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
-        }
-		
-		yt-dlp --update-to nightly
-
-        $root = $script:ReleaseRoot
-        $destination = (Get-Location).Path
-
-        $files = @(
-            "portable_config\scripts\opensubs.lua",
-            "portable_config\script-opts\opensubs.conf",
-            "portable_config\helpers\opensubs_helper.py",
-            "portable_config\helpers\fix_opensubs.ps1",
-            "portable_config\input.conf"
-        )
-
-        foreach ($file in $files) {
-
-            $source = Join-Path $root.FullName $file
-            $target = Join-Path $destination $file
-
-            $targetDir = Split-Path $target -Parent
-            if (-not (Test-Path $targetDir)) {
-                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-            }
-
-            Copy-Item $source $target -Force
-        }
-
-        if (-not (Test-Path $source)) {
-            throw "Files not found at $source"
-        }
-
-        Write-Host "Copying updated files..." -ForegroundColor Green
-
-        $targetDir = Split-Path $target -Parent
-        if (-not (Test-Path $targetDir)) {
-            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        }
-
-        Copy-Item -Path $source -Destination $target -Force
-
-        Write-Host "Update complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-function Upgrade-mpv-Files-116 {
-
-    Write-Host "Updating Browser extension, please manually uninstall and reinstall from your browser's extensions..." -ForegroundColor Green
-
-    try {
-
-        if (!$script:ReleaseDownloaded) {
-            Download-Latest-Release
-        }
-
-        $root = $script:ReleaseRoot
-        $destination = (Get-Location).Path
-
-        $files = @(
-            "installer\mpv-synth-extension.zip",
-            "installer\updater.ps1",
-            "portable_config\script-opts\vapoursynth.conf",
-            "portable_config\scripts\vapoursynth.lua"
-        )
-
-        foreach ($file in $files) {
-
-            $source = Join-Path $root.FullName $file
-            $target = Join-Path $destination $file
-
-            $targetDir = Split-Path $target -Parent
-            if (-not (Test-Path $targetDir)) {
-                New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-            }
-
-            Copy-Item $source $target -Force
-        }
-
-        if (-not (Test-Path $source)) {
-            throw "Files not found at $source"
-        }
-
-        Write-Host "Copying updated files..." -ForegroundColor Green
-
-        $targetDir = Split-Path $target -Parent
-        if (-not (Test-Path $targetDir)) {
-            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        }
-
-        Copy-Item -Path $source -Destination $target -Force
-
-        Write-Host "Update complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
-
-function Upgrade-mpv-Files-120 {
-
-    Write-Host "Upgrading SVPflow + VapourSynth runtime, vapoursynth.vpy, vapoursynth.lua and vapoursynth.conf..." -ForegroundColor Green
-
-    try {
-
-        # TEST SWITCH: copy the script files straight from the GitHub release.
-        # In force mode the release may be older than this updater (the release
-        # is only rebuilt when Kris publishes), so the files already in the
-        # tree are the freshest ones -- keep them and just fix the runtime.
-        $destination = (Get-Location).Path
-        $force_mode = $script:ForceMigrationsOnNextRun
-
-        if ($force_mode) {
-            Write-Host "Test-switch active: keeping the vapoursynth.vpy / .lua / .conf already in this tree (no release download)." -ForegroundColor Yellow
-        }
-        else {
-            if (!$script:ReleaseDownloaded) {
-                Download-Latest-Release
-            }
-
-            $root = $script:ReleaseRoot
-
-            # 1) Overwrite the interpolation scripts with the versions from the
-            #    latest release. These are runtime support files, not user edits.
-            $files = @(
-                "portable_config\VapourSynth\vapoursynth.vpy",
-                "portable_config\scripts\vapoursynth.lua",
-                "portable_config\script-opts\vapoursynth.conf",
-                "portable_config\scripts\opensubs.lua",
-                "portable_config\scripts\osc-simplified.lua"
-            )
-
-            foreach ($file in $files) {
-
-                $source = Join-Path $root.FullName $file
-                $target = Join-Path $destination $file
-
-                if (-not (Test-Path $source)) {
-                    throw "$file not found in release at $source"
-                }
-
-                $targetDir = Split-Path $target -Parent
-                if (-not (Test-Path $targetDir)) {
-                    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-                }
-
-                Copy-Item -Path $source -Destination $target -Force
-                Write-Host "Updated $file" -ForegroundColor Green
-            }
-        }
-
-        # 2) Replace the VapourSynth runtime itself. Anything older than the
-        #    R80+ pip layout (no Lib\site-packages\vapoursynth\vsscript.dll)
-        #    cannot run the new open-svpflow plugins: the old API-3 DLLs will
-        #    not load on R80+ cores, and a partial manual wheel copy leaves a
-        #    mixed tree. So we wipe everything except the user's own artifacts
-        #    and install the latest stable release the official way.
-        $vs_dir = Join-Path $destination "portable_config\VapourSynth"
-        $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
-
-        if (Test-VapourSynth-Healthy $vs_dir) {
-            Write-Host "VapourSynth R80+ runtime already in place -- skipping reinstall." -ForegroundColor Green
-        }
-        else {
-            $null = New-Item -ItemType Directory -Force $vs_dir
-            Reset-VapourSynth-Folder $vs_dir
-            Install-VapourSynth-Runtime $vs_dir
-        }
-
-        # Always refresh the pointers, healthy tree or fresh install: stale
-        # VSSCRIPT_PATH / VSSCRIPT_DLL values (e.g. from a system python's
-        # pip-installed vapoursynth) otherwise survive every pass, because a
-        # healthy tree never reaches the reinstall branch that used to do it.
-        Set-VSScriptPath
-
-        # 3) Make sure the SVPflow DLLs are current (open-svpflow releases).
-        Get-VSDLLs
-
-        # 4) If the freshly-copied vpy still referenced the ancient DLL names,
-        #    keep the old files so interpolation keeps working.
-        $vpy = Join-Path $vs_dir "vapoursynth.vpy"
-        if (Test-Path $vpy) {
-            if (Select-String -Path $vpy -Pattern "vs1-x64\.dll|vs2-x64\.dll" -Quiet) {
-                Write-Host "Warning: the new vapoursynth.vpy still references vs1-x64.dll / vs2-x64.dll. Keeping the old DLLs so interpolation keeps working." -ForegroundColor Yellow
-                return
-            }
-
-            # Remove the old renamed DLLs, but only once the new ones are confirmed present.
-            $new1 = Join-Path $vs_dir "svpflow1_vs.dll"
-            $new2 = Join-Path $vs_dir "svpflow2_vs.dll"
-
-            if ((Test-Path $new1) -and (Test-Path $new2)) {
-                foreach ($old in @("vs1-x64.dll", "vs2-x64.dll")) {
-                    $oldPath = Join-Path $vs_dir $old
-                    if (Test-Path $oldPath) {
-                        Remove-Item -Path $oldPath -Force -ErrorAction Stop
-                        Write-Host "Removed old $old" -ForegroundColor Green
-                    }
-                }
-            }
-            else {
-                Write-Host "Warning: new svpflow DLLs not found in $vs_dir -- keeping old vs1-x64.dll / vs2-x64.dll." -ForegroundColor Yellow
-            }
-        }
-
-        Write-Host "Update complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Update failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
-}
+# ---------------------------------------------------------------------------
+# Release download
+# ---------------------------------------------------------------------------
 
 function Download-Latest-Release {
     Write-Host "Downloading mpv-synth latest release..." -ForegroundColor Green
 
     $zip_url = "https://github.com/AJCrowley/mpv-synth/releases/latest/download/mpv-synth.zip"
-    $script:temp_zip = Join-Path $env:TEMP "mpv-synth.zip"
-    $script:extract_dir = Join-Path $env:TEMP "mpv_synth_extract"
 
-    Write-Host "Downloading latest release..." -ForegroundColor Green
-    Invoke-WebRequest -Uri $zip_url -OutFile $temp_zip -UserAgent $useragent
+    Invoke-WebRequestWithRetry -Uri $zip_url -OutFile $script:temp_zip
 
     if (Test-Path $script:extract_dir) {
         Remove-Item $script:extract_dir -Recurse -Force
     }
-	Expand-Archive -LiteralPath $script:temp_zip -DestinationPath $script:extract_dir -Force
+    Expand-Archive -LiteralPath $script:temp_zip -DestinationPath $script:extract_dir -Force
 
-	$script:ReleaseRoot = Get-ChildItem $script:extract_dir -Directory | Select-Object -First 1
-	$script:ReleaseDownloaded = $true
+    # The zip normally has one wrapper folder, but accept a flat layout too.
+    $flat = (Test-Path (Join-Path $script:extract_dir "portable_config")) -or
+            (Test-Path (Join-Path $script:extract_dir "installer"))
+    if ($flat) {
+        $script:ReleaseRoot = Get-Item $script:extract_dir
+    }
+    else {
+        $script:ReleaseRoot = Get-ChildItem $script:extract_dir -Directory | Select-Object -First 1
+    }
+
+    if (-not $script:ReleaseRoot) {
+        throw "The downloaded release archive was empty or had an unexpected layout."
+    }
+    $script:ReleaseDownloaded = $true
 }
 
 function Clean-Downloaded {
-
     if ($script:ReleaseDownloaded) {
-
-        if (Test-Path $script:temp_zip) {
-            Remove-Item $script:temp_zip -Force
+        if ($script:temp_zip -and (Test-Path $script:temp_zip)) {
+            Remove-Item $script:temp_zip -Force -ErrorAction SilentlyContinue
         }
-
-        if (Test-Path $script:extract_dir) {
-            Remove-Item $script:extract_dir -Recurse -Force
+        if ($script:extract_dir -and (Test-Path $script:extract_dir)) {
+            Remove-Item $script:extract_dir -Recurse -Force -ErrorAction SilentlyContinue
         }
-
         $script:ReleaseDownloaded = $false
     }
 }
 
-function Get-PythonCommand {
-
-    # portable_config\VapourSynth\python.exe is a stripped-down "embeddable"
-    # Python that Get-VapourSynth installs purely for VapourSynth/mpv's own
-    # internal use. It lacks ensurepip/venv, so pip cannot build packages
-    # from source with it (e.g. srt, a subliminal dependency, has no wheel
-    # and fails with "Cannot import 'setuptools.build_meta'" under it).
-    # It must never be picked as the general-purpose interpreter for
-    # Ensure-PythonPackage, no matter how it ends up resolvable on PATH.
-    $vsPythonDir = Join-Path (Get-Location).Path "portable_config\VapourSynth"
-
-    function Test-IsVsPython($path) {
-        if (-not $path) { return $false }
-        return $path.StartsWith($vsPythonDir, [System.StringComparison]::OrdinalIgnoreCase)
-    }
-
-    $python = Get-Command python -ErrorAction SilentlyContinue
-
-    if ($python -and -not (Test-IsVsPython $python.Source)) {
-        return "python"
-    }
-
-    $py = Get-Command py -ErrorAction SilentlyContinue
-
-    if ($py -and -not (Test-IsVsPython $py.Source)) {
-        return "py"
-    }
-
-    # PATH may not have refreshed yet in this session (e.g. immediately after
-    # a silent installer run, or a winget-driven PATH change that hasn't
-    # propagated to this process). Fall back to checking the well-known
-    # install locations directly rather than reporting "not found" too early.
-    $candidate = @(
-        (Get-ChildItem "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue),
-        (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue)
-    ) | Where-Object { $_ -and -not (Test-IsVsPython $_.FullName) } | Select-Object -First 1
-
-    if ($candidate) {
-        return $candidate.FullName
-    }
-
-    return $null
-}
-
 function Complete-SelfUpdate {
-    $dst_installer = Join-Path (Get-Location).Path "installer"
+    $dst_installer = Join-Path $script:Root "installer"
     $temp_installer = "$dst_installer.new"
 
     $dst_updater = $PSCommandPath
@@ -948,19 +700,19 @@ function Complete-SelfUpdate {
 
     Write-Host "Finalising updater replacement after exit..." -ForegroundColor Green
 
-    $commands = @()
+    # Single quotes inside paths must be doubled inside a '...' literal.
+    function Q([string]$s) { return $s.Replace("'", "''") }
 
+    $commands = @()
     $commands += 'Start-Sleep -Seconds 2'
 
     if (Test-Path $temp_installer) {
-
-        $commands += "if (Test-Path '$dst_installer') { Remove-Item '$dst_installer' -Recurse -Force }"
-        $commands += "Move-Item '$temp_installer' '$dst_installer' -Force"
+        $commands += "if (Test-Path '$(Q $dst_installer)') { Remove-Item '$(Q $dst_installer)' -Recurse -Force }"
+        $commands += "Move-Item '$(Q $temp_installer)' '$(Q $dst_installer)' -Force"
     }
 
     if (Test-Path $temp_updater) {
-
-        $commands += "Move-Item '$temp_updater' '$dst_updater' -Force"
+        $commands += "Move-Item '$(Q $temp_updater)' '$(Q $dst_updater)' -Force"
     }
 
     $commandString = $commands -join '; '
@@ -979,10 +731,11 @@ function Ensure-Green-Light {
         [Parameter(Mandatory)]
         [string]$Message
     )
-	
-	if ($Unattended) {
-		return
-	}
+
+    if ($Unattended) {
+        Write-Host "Unattended mode: continuing without confirmation. Changed config files are saved as *.bak." -ForegroundColor Yellow
+        return
+    }
 
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Yellow
@@ -1061,7 +814,13 @@ function Invoke-Migrations {
         Write-Host "Running migration 1.2.0 (forced)" -ForegroundColor Cyan
         try {
             & $forced.Script
-            Set-InstalledVersion ([version]"1.2.0")
+            # Never LOWER the recorded version (it may already be 1.2.1+).
+            if ($forced.Version -gt $installed) {
+                Set-InstalledVersion $forced.Version
+            }
+            else {
+                Write-Host "Registry version is already $installed -- not lowering it." -ForegroundColor Yellow
+            }
             Write-Host "Migration completed." -ForegroundColor Green
         }
         catch {
@@ -1071,7 +830,7 @@ function Invoke-Migrations {
         return
     }
 
-    foreach ($migration in ($migrations | Sort-Object Version)) {
+    foreach ($migration in ($migrations | Sort-Object { $_.Version })) {
 
         if ($migration.Version -gt $installed) {
 
@@ -1079,21 +838,23 @@ function Invoke-Migrations {
             Write-Host "Running migration $($migration.Version)" -ForegroundColor Cyan
 
             try {
-
                 & $migration.Script
 
+                # Only reached when the migration did not throw, so a failed
+                # migration is retried on the next run instead of being skipped.
                 Set-InstalledVersion $migration.Version
 
                 Write-Host "Migration completed." -ForegroundColor Green
             }
             catch {
-
-                Write-Host "Migration failed." -ForegroundColor Red
+                Write-Host "Migration $($migration.Version) failed: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "It will be retried the next time the updater runs." -ForegroundColor Yellow
                 throw
             }
         }
     }
 }
+
 # ---------------------------------------------------------------------------
 # 7-Zip helpers
 # ---------------------------------------------------------------------------
@@ -1114,12 +875,13 @@ function Get-7z {
     return $null
 }
 
+# NOTE: the fallback 7zr.exe can only handle .7z archives. Zip files
+# (Deno) are extracted with Expand-Archive instead.
 function Check-7z {
     if (-not (Get-7z)) {
         $null = New-Item -ItemType Directory -Force (Split-Path $fallback7z)
         Write-Host "Downloading 7zr.exe" -ForegroundColor Green
-        Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" `
-                          -UserAgent $useragent -OutFile $fallback7z
+        Invoke-WebRequestWithRetry -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile $fallback7z
     }
     else {
         Write-Host "7z already exists. Skipped download." -ForegroundColor Green
@@ -1129,40 +891,51 @@ function Check-7z {
 function Extract-Archive {
     param(
         [string]   $Archive,
-        [string[]] $Files   = @(),
         [string[]] $Exclude = @()
     )
     $7z = Get-7z
     Write-Host "Extracting $Archive" -ForegroundColor Green
 
-    if ($Files.Count -gt 0) {
-        & $7z e -y $Archive @Files
-    }
-    else {
-        $excludeArgs = $Exclude | ForEach-Object { "-xr!$_" }
-        & $7z x -y $Archive @excludeArgs
+    $excludeArgs = $Exclude | ForEach-Object { "-xr!$_" }
+    & $7z x -y $Archive @excludeArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "7-Zip failed to extract $Archive (exit code $LASTEXITCODE)"
     }
 }
 
-function Download-Archive ($filename, $link) {
+# $digest is optional and uses GitHub's "sha256:<hex>" asset-digest format.
+function Download-Archive ($filename, $link, $digest) {
     Write-Host "Downloading $filename" -ForegroundColor Green
-    Invoke-WebRequest -Uri $link -UserAgent $useragent -OutFile $filename
+    Invoke-WebRequestWithRetry -Uri $link -OutFile $filename
+
+    if ($digest -and ($digest -match '^sha256:([0-9a-fA-F]{64})$')) {
+        $expected = $Matches[1]
+        $actual = (Get-FileHash -LiteralPath $filename -Algorithm SHA256).Hash
+        if ($actual -ine $expected) {
+            Remove-Item -LiteralPath $filename -Force -ErrorAction SilentlyContinue
+            throw "Checksum mismatch for $filename (expected $expected, got $actual)"
+        }
+        Write-Host "SHA256 verified." -ForegroundColor Green
+    }
 }
 
 function Check-PowershellVersion {
     $version = $PSVersionTable.PSVersion.Major
     Write-Host "Checking Windows PowerShell version -- $version" -ForegroundColor Green
-    if ($version -le 2) {
-        Write-Host "PowerShell $version is unsupported. Please upgrade." -ForegroundColor Red
-        throw
+    # Expand-Archive and Get-ItemPropertyValue need PowerShell 5.0+.
+    if ($version -lt 5) {
+        Write-Host "PowerShell $version is unsupported (5.0 or newer required). Please upgrade." -ForegroundColor Red
+        throw "PowerShell $version is unsupported."
     }
 }
 
+# Full path of a yt-dlp / youtube-dl exe in the install folder, or $null.
 function Check-Ytplugin {
-    $ytdlp     = Get-ChildItem "yt-dlp*.exe" -ErrorAction Ignore
-    $youtubedl = Get-ChildItem "youtube-dl.exe" -ErrorAction Ignore
-    if ($ytdlp)     { return $ytdlp.ToString() }
-    if ($youtubedl) { return $youtubedl.ToString() }
+    $found = @(Get-ChildItem -LiteralPath $script:Root -Filter "yt-dlp*.exe" -File -ErrorAction Ignore | Sort-Object Name)
+    if ($found.Count -gt 0) { return $found[0].FullName }
+
+    $yd = Join-Path $script:Root "youtube-dl.exe"
+    if (Test-Path $yd) { return $yd }
     return $null
 }
 
@@ -1173,7 +946,9 @@ function Check-Ytplugin-In-System {
         $ytp = Get-Command -CommandType Application -ErrorAction Ignore youtube-dl.exe |
                Select-Object -Last 1
     }
-    return [bool]($ytp -and ((Split-Path $ytp.Source) -ne (Get-Location)))
+    if (-not $ytp) { return $false }
+    $dir = (Split-Path $ytp.Source).TrimEnd('\')
+    return ($dir -ine $script:Root.TrimEnd('\'))
 }
 
 function Get-Latest-Ytplugin ($plugin) {
@@ -1207,31 +982,53 @@ function Download-Ytplugin ($plugin, $version) {
             $repo = "https://github.com/yt-dlp/yt-dlp-nightly-builds"
             $exe  = "$plugin$suffix.exe"
             $link = "$repo/releases/download/$version/$exe"
-            Invoke-WebRequest -Uri $link -UserAgent $useragent -OutFile $exe
+            Invoke-WebRequestWithRetry -Uri $link -OutFile (Join-Path $script:Root $exe)
         }
         "youtube-dl" {
             Write-Host "Downloading $plugin ($version)" -ForegroundColor Green
             $link = "https://yt-dl.org/downloads/$version/youtube-dl.exe"
-            Invoke-WebRequest -Uri $link -UserAgent $useragent -OutFile "youtube-dl.exe"
+            Invoke-WebRequestWithRetry -Uri $link -OutFile (Join-Path $script:Root "youtube-dl.exe")
         }
     }
 }
 
+# Unauthenticated GitHub API calls are limited to 60/hour per IP. Set a
+# GITHUB_TOKEN environment variable to lift that. Returns $null on failure.
 function Get-LatestGithubRelease ($repo) {
-    $api  = "https://api.github.com/repos/$repo/releases/latest"
-    return Invoke-WebRequest $api -MaximumRedirection 0 -ErrorAction Ignore `
-               -UseBasicParsing -UserAgent $useragent | ConvertFrom-Json
+    $api = "https://api.github.com/repos/$repo/releases/latest"
+    try {
+        $params = @{
+            Uri             = $api
+            UseBasicParsing = $true
+            UserAgent       = $useragent
+            ErrorAction     = "Stop"
+        }
+        if ($env:GITHUB_TOKEN) {
+            $params.Headers = @{ Authorization = "Bearer $($env:GITHUB_TOKEN)" }
+        }
+        return (Invoke-WebRequest @params).Content | ConvertFrom-Json
+    }
+    catch {
+        Write-Host "GitHub API request for $repo failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $null
+    }
 }
 
 function Get-Latest-Mpv ($Arch) {
-    $json  = Get-LatestGithubRelease "shinchiro/mpv-winbuild-cmake"
+    $json = Get-LatestGithubRelease "shinchiro/mpv-winbuild-cmake"
+    if (-not $json -or -not $json.assets) {
+        throw "Could not query GitHub for the latest mpv build (network problem or API rate limit)."
+    }
     $asset = $json.assets | Where-Object { $_.name -match "^mpv-$Arch-[0-9]{8}" } |
              Select-Object -First 1
-    return $asset.name, $asset.browser_download_url
+    if (-not $asset) {
+        throw "No mpv build for '$Arch' was found in the latest release."
+    }
+    return $asset.name, $asset.browser_download_url, $asset.digest
 }
 
 function Get-Arch {
-    $FilePath = Join-Path (Get-Location).Path 'mpv.exe'
+    $FilePath = Join-Path $script:Root 'mpv.exe'
     [byte[]]$data   = New-Object System.Byte[] 4096
     $stream = New-Object System.IO.FileStream($FilePath, 'Open', 'Read')
     $stream.Read($data, 0, 4096) | Out-Null
@@ -1252,22 +1049,31 @@ function Get-Arch {
 }
 
 function ExtractGitFromFile {
-    $stripped = (& ".\mpv.exe" --no-config 2>&1) | Select-String "mpv" | Select-Object -First 1
+    $mpv = Join-Path $script:Root "mpv.exe"
+    # --version prints the banner and exits (no window / no waiting for input).
+    $stripped = (& $mpv --version 2>&1) | Select-String "mpv" | Select-Object -First 1
     # Length range, not an exact 7: shinchiro hashes are 10 chars
-    # (e.g. -g3138fc8eea in mpv-x86_64-20261105-git-3138fc8eea.7z) so an
-    # exact {7} silently missed, and indexing a null $matches then hard-
-    # killed the whole updater ("Cannot index into a null array").
-    if ($stripped -match "-g([a-z0-9-]{7,12})") { return $matches[1] }
+    # (e.g. -g3138fc8eea) so an exact {7} silently missed.
+    if ($stripped -and ($stripped.ToString() -match "-g([0-9a-f]{7,12})")) { return $matches[1] }
     return $null
 }
 
 function ExtractGitFromURL ($filename) {
-    if ($filename -match "-git-([a-z0-9-]{7,12})") { return $matches[1] }
+    if ($filename -match "-git-([a-z0-9]{7,12})") { return $matches[1] }
     return $null
 }
 
+# Short and long git hashes of the same commit differ only in length, so
+# compare by prefix (the old `-match` failed whenever the local hash was the
+# shorter one).
+function Test-GitMatch($a, $b) {
+    if (-not $a -or -not $b) { return $false }
+    return ($a.StartsWith($b, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $b.StartsWith($a, [System.StringComparison]::OrdinalIgnoreCase))
+}
+
 function ExtractDateFromFile {
-    $date = (Get-Item ./mpv.exe).LastWriteTimeUtc
+    $date = (Get-Item (Join-Path $script:Root "mpv.exe")).LastWriteTimeUtc
     return "$($date.Year.ToString('0000'))$($date.Month.ToString('00'))$($date.Day.ToString('00'))"
 }
 
@@ -1277,11 +1083,10 @@ function ExtractDateFromURL ($filename) {
 }
 
 function Ensure-Deno ([string]$Context = "update") {
-    $deno_exe = Join-Path (Get-Location) "deno.exe"
+    $deno_exe = Join-Path $script:Root "deno.exe"
 
     if (Test-Path $deno_exe) {
-        $remote_name = (Invoke-WebRequest "https://dl.deno.land/release-latest.txt" `
-                            -UseBasicParsing -UserAgent $useragent).Content.Trim()
+        $remote_name = ([string](Invoke-WebRequestWithRetry -Uri "https://dl.deno.land/release-latest.txt").Content).Trim()
         try {
             $current = (& $deno_exe --version | Select-String "deno" | Select-Object -First 1).ToString()
             if ([Regex]::Match($current, "deno\s+(?<ver>[0-9a-zA-Z\.-]+)").Groups['ver'].Value `
@@ -1316,15 +1121,15 @@ function Ensure-Deno ([string]$Context = "update") {
     if ((Read-KeyOrTimeout "Proceed with downloading Deno now? [Y/n] (default=y)" "Y") -ne 'Y') { return }
     Write-Host ""
 
-    $remote_name  = (Invoke-WebRequest "https://dl.deno.land/release-latest.txt" `
-                         -UseBasicParsing -UserAgent $useragent).Content.Trim()
-    $archive      = "deno-x86_64-pc-windows-msvc.zip"
+    $remote_name   = ([string](Invoke-WebRequestWithRetry -Uri "https://dl.deno.land/release-latest.txt").Content).Trim()
+    $archive       = "deno-x86_64-pc-windows-msvc.zip"
     $download_link = "https://dl.deno.land/release/$remote_name/$archive"
+    $archive_path  = Join-Path $script:Root $archive
     Write-Host "Downloading Deno (stable) $remote_name" -ForegroundColor Green
-    Download-Archive $archive $download_link
-    Check-7z
-    Extract-Archive $archive
-    Check-Autodelete $archive
+    Download-Archive $archive_path $download_link
+    # .zip: Expand-Archive, NOT 7z (the fallback 7zr.exe cannot read zips).
+    Expand-Archive -LiteralPath $archive_path -DestinationPath $script:Root -Force
+    Check-Autodelete $archive_path
 }
 
 function Stop-Mpv {
@@ -1364,13 +1169,13 @@ function Create-XML {
   <getytdl>unset</getytdl>
   <ytdlpchannel>unset</ytdlpchannel>
 </settings>
-"@ | Set-Content "settings.xml" -Encoding UTF8
+"@ | Set-Content (Join-Path $script:Root "settings.xml") -Encoding UTF8
 }
 
 function Get-SettingsDoc {
-    $file = "settings.xml"
+    $file = Join-Path $script:Root "settings.xml"
     if (-not (Test-Path $file)) { Create-XML }
-    return [xml](Get-Content $file), $file
+    return [xml](Get-Content $file -Raw), $file
 }
 
 function Check-Arch ($arch) {
@@ -1415,8 +1220,8 @@ function Check-Autodelete ($archive) {
 
 function Check-GetFFmpeg {
     $doc, $file = Get-SettingsDoc
-    $ffmpeg_missing  = -not (Test-Path (Join-Path (Get-Location).Path "ffmpeg.exe"))
-    $ffprobe_missing = -not (Test-Path (Join-Path (Get-Location).Path "ffprobe.exe"))
+    $ffmpeg_missing  = -not (Test-Path (Join-Path $script:Root "ffmpeg.exe"))
+    $ffprobe_missing = -not (Test-Path (Join-Path $script:Root "ffprobe.exe"))
     $either_missing  = $ffmpeg_missing -or $ffprobe_missing
 
     if ($doc.settings.getffmpeg -eq "unset" -or $either_missing) {
@@ -1445,7 +1250,7 @@ function Check-GetYTDL {
         $get_ytdl = if ($null -eq $yt) {
             "unset"
         }
-        elseif ((Get-Item $yt).BaseName -match "yt-dlp*") {
+        elseif ((Get-Item $yt).BaseName -like "yt-dlp*") {
             "ytdlp"
         }
         else {
@@ -1473,9 +1278,8 @@ function Check-GetYTDL {
     return $get_ytdl
 }
 
-
 function Check-Mpv {
-    return Test-Path (Join-Path (Get-Location).Path "mpv.exe")
+    return Test-Path (Join-Path $script:Root "mpv.exe")
 }
 
 function Upgrade-Mpv {
@@ -1483,16 +1287,17 @@ function Upgrade-Mpv {
     $arch = ""
     $remoteName = ""
     $download_link = ""
+    $digest = $null
 
     if (Check-Mpv) {
-        $arch       = Check-Arch (Get-Arch).FileType
-        $remoteName, $download_link = Get-Latest-Mpv $arch
+        $arch = Check-Arch (Get-Arch).FileType
+        $remoteName, $download_link, $digest = Get-Latest-Mpv $arch
         $localgit   = ExtractGitFromFile
         $localdate  = ExtractDateFromFile
         $remotegit  = ExtractGitFromURL $remoteName
         $remotedate = ExtractDateFromURL $remoteName
 
-        if ($localgit -and $remotegit -and ($localgit -match $remotegit) -and ($localdate -match $remotedate)) {
+        if ((Test-GitMatch $localgit $remotegit) -and $localdate -and ($localdate -eq $remotedate)) {
             Write-Host "You are already using latest mpv build -- $remoteName" -ForegroundColor Green
         }
         else {
@@ -1516,7 +1321,7 @@ function Upgrade-Mpv {
                 Write-Host "Detected 32-bit system" -ForegroundColor Green; "i686"
             }
             $arch = Check-Arch $original_arch
-            $remoteName, $download_link = Get-Latest-Mpv $arch
+            $remoteName, $download_link, $digest = Get-Latest-Mpv $arch
         }
         elseif ($result -ne 'N') {
             Write-Host "Invalid input -- skipping mpv download" -ForegroundColor Yellow
@@ -1524,11 +1329,12 @@ function Upgrade-Mpv {
     }
 
     if ($need_download) {
-        Download-Archive $remoteName $download_link
+        $archive_path = Join-Path $script:Root $remoteName
+        Download-Archive $archive_path $download_link $digest
         Check-7z
-        Extract-Archive $remoteName -Exclude @("*.bat", "*.ps1", "doc", "installer")
+        Extract-Archive $archive_path -Exclude @("*.bat", "*.ps1", "doc", "installer")
     }
-    if ($remoteName) { Check-Autodelete $remoteName }
+    if ($remoteName) { Check-Autodelete (Join-Path $script:Root $remoteName) }
 }
 
 function Upgrade-Ytplugin {
@@ -1539,7 +1345,7 @@ function Upgrade-Ytplugin {
 
     $yt = Check-Ytplugin
     if ($yt) {
-        if ((Get-Item $yt).BaseName -match "yt-dlp*") {
+        if ((Get-Item $yt).BaseName -like "yt-dlp*") {
             # Kris (19:14): always update to the nightly channel; the
             # stable/master choice is gone. yt-dlp exits quickly when it
             # is already current, so running it every pass is cheap.
@@ -1575,9 +1381,9 @@ function Upgrade-Ytplugin {
     }
 }
 
-# gyan.dev 503s under load; one retry with a pause turns that from a
-# failed step into a successful pass most of the time (warn-and-continue
-# still covers the rest).
+# gyan.dev (and GitHub) occasionally 503 under load; a couple of retries with
+# a pause turns that from a failed step into a successful pass most of the
+# time (warn-and-continue still covers the rest).
 function Invoke-WebRequestWithRetry {
     param(
         [string]$Uri,
@@ -1589,11 +1395,11 @@ function Invoke-WebRequestWithRetry {
         try {
             if ($OutFile) {
                 Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -UserAgent $useragent
+                return
             }
             else {
                 return Invoke-WebRequest -Uri $Uri -UseBasicParsing -UserAgent $useragent
             }
-            return
         }
         catch {
             if ($attempt -ge 3) { throw }
@@ -1609,21 +1415,34 @@ function Upgrade-FFmpeg {
     $ver_url      = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z.ver"
     $archive_url  = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z"
     $archive_name = "ffmpeg-git-essentials.7z"
-    $archive_path = Join-Path (Get-Location).Path $archive_name
+    $archive_path = Join-Path $script:Root $archive_name
 
-    $resp = Invoke-WebRequestWithRetry $ver_url
-    $remote_ver = ([System.Text.Encoding]::UTF8.GetString($resp.Content)).Trim()
+    $resp = Invoke-WebRequestWithRetry -Uri $ver_url
+    # Content is byte[] or string depending on the server's content type / PS version.
+    $content = $resp.Content
+    $remote_ver = if ($content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($content) } else { [string]$content }
+    $remote_ver = $remote_ver.Trim()
     Write-Host "Latest ffmpeg/ffprobe build: $remote_ver" -ForegroundColor Green
 
-    $ffmpeg_path  = Join-Path (Get-Location).Path "ffmpeg.exe"
-    $ffprobe_path = Join-Path (Get-Location).Path "ffprobe.exe"
+    $ffmpeg_path  = Join-Path $script:Root "ffmpeg.exe"
+    $ffprobe_path = Join-Path $script:Root "ffprobe.exe"
     $need_download = $false
 
     if (Test-Path $ffmpeg_path) {
-        $local_ver = (.\ffmpeg -version | Select-String "ffmpeg version" |
-                      Select-Object -First 1).ToString().Trim()
-        $commit = [Regex]::Match($remote_ver, "git-([a-z0-9]+)$").Groups[1].Value
-        if ($local_ver -match [Regex]::Escape($commit)) {
+        $local_ver = ((& $ffmpeg_path -version | Select-String "ffmpeg version" |
+                       Select-Object -First 1).ToString()).Trim()
+        # No end-of-string anchor: the .ver string usually continues after the
+        # hash (e.g. "...-git-abc123-essentials_build-www.gyan.dev"). If no
+        # hash can be parsed, fall back to comparing the whole string -- never
+        # to an empty pattern, which matches everything and blocks updates.
+        $commit = [Regex]::Match($remote_ver, "git-([a-z0-9]+)").Groups[1].Value
+        $up_to_date = if ($commit) {
+            $local_ver -match [Regex]::Escape($commit)
+        }
+        else {
+            $local_ver.Contains($remote_ver)
+        }
+        if ($up_to_date) {
             Write-Host "ffmpeg is already up to date -- $remote_ver" -ForegroundColor Green
         }
         else {
@@ -1641,14 +1460,11 @@ function Upgrade-FFmpeg {
     }
 
     if ($need_download) {
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", $useragent)
         Write-Host "Downloading $archive_name" -ForegroundColor Green
-        $wc.DownloadFile($archive_url, $archive_path)
+        Invoke-WebRequestWithRetry -Uri $archive_url -OutFile $archive_path
         Check-7z
         $7z = Get-7z
-        $dest = (Get-Location).Path
-        & $7z e -y "-o$dest" $archive_path "ffmpeg.exe" "ffprobe.exe" -r
+        & $7z e -y "-o$($script:Root)" $archive_path "ffmpeg.exe" "ffprobe.exe" -r
         if (Test-Path $ffmpeg_path)  { Write-Host "ffmpeg.exe  extracted OK" -ForegroundColor Green }
         else                         { Write-Host "ffmpeg.exe  NOT found after extraction" -ForegroundColor Red }
         if (Test-Path $ffprobe_path) { Write-Host "ffprobe.exe extracted OK" -ForegroundColor Green }
@@ -1657,58 +1473,84 @@ function Upgrade-FFmpeg {
     }
 }
 
+# Prompts with a timeout. In unattended mode (or when there is no usable
+# console, e.g. a scheduled task) it never touches the console and simply
+# returns the default.
 function Read-KeyOrTimeout ($prompt, $key) {
-    $seconds   = 9
-    $startTime = Get-Date
-    $timeOut   = New-TimeSpan -Seconds $seconds
-
-    Write-Host "$prompt " -ForegroundColor Green
-    [Console]::CursorLeft = 0
-    [Console]::Write("[")
-    [Console]::CursorLeft = $seconds + 2
-    [Console]::Write("]")
-    [Console]::CursorLeft = 1
-
-    while (-not [System.Console]::KeyAvailable) {
-        Start-Sleep -s 1
-        Write-Host "#" -ForegroundColor Green -NoNewline
-        if ((Get-Date) -gt $startTime + $timeOut) { break }
+    if ($Unattended -or [Console]::IsInputRedirected) {
+        Write-Host "$prompt -> unattended, using default ($key)" -ForegroundColor DarkGray
+        return $key.ToString()
     }
 
-    $response = if ([System.Console]::KeyAvailable) {
-        [System.Console]::ReadKey($true).Key
+    try {
+        $seconds   = 9
+        $startTime = Get-Date
+        $timeOut   = New-TimeSpan -Seconds $seconds
+
+        Write-Host "$prompt " -ForegroundColor Green
+        [Console]::CursorLeft = 0
+        [Console]::Write("[")
+        [Console]::CursorLeft = $seconds + 2
+        [Console]::Write("]")
+        [Console]::CursorLeft = 1
+
+        while (-not [System.Console]::KeyAvailable) {
+            Start-Sleep -s 1
+            Write-Host "#" -ForegroundColor Green -NoNewline
+            if ((Get-Date) -gt $startTime + $timeOut) { break }
+        }
+
+        $response = if ([System.Console]::KeyAvailable) {
+            [System.Console]::ReadKey($true).Key
+        }
+        else {
+            $key
+        }
+        return $response.ToString()
     }
-    else {
-        $key
+    catch {
+        # Console APIs unavailable: behave as unattended.
+        return $key.ToString()
     }
-    return $response.ToString()
 }
 
-# A present-but-mixed tree (a manual wheel copy) can contain the script
-# host without the embedded python or the pip-installed plugins, so the
-# presence of vsscript.dll alone is NOT proof of a healthy R80+ runtime.
-# All three parts have to exist, otherwise the wipe-and-reinstall runs and
-# the legacy litter gets cleaned out exactly as Kris asked (19:14 msg).
+# ---------------------------------------------------------------------------
+# VapourSynth runtime
+# ---------------------------------------------------------------------------
+
+# A present-but-mixed tree (a manual wheel copy) can contain the script host
+# without the embedded python or the pip-installed plugins, so vsscript.dll
+# alone is NOT proof of a healthy R80+ runtime. The plugin check asks pip
+# instead of assuming a folder layout.
 function Test-VapourSynth-Healthy {
     param([string]$VSDir)
 
-    $checks = @(
-        (Join-Path $VSDir "Lib\site-packages\vapoursynth\vsscript.dll"),
-        (Join-Path $VSDir "python.exe"),
-        (Join-Path $VSDir "Lib\site-packages\vapoursynth\plugins\open-svpflow")
-    )
-    foreach ($check in $checks) {
+    $vsscript = Join-Path $VSDir "Lib\site-packages\vapoursynth\vsscript.dll"
+    $py       = Join-Path $VSDir "python.exe"
+
+    foreach ($check in @($vsscript, $py)) {
         if (-not (Test-Path $check)) {
             Write-Host "VapourSynth health check failed: missing $(Split-Path $check -Leaf) in $VSDir" -ForegroundColor Yellow
             return $false
         }
     }
+
+    try {
+        $null = & $py -m pip show open-svpflow 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "VapourSynth health check failed: open-svpflow is not installed in the portable runtime." -ForegroundColor Yellow
+            return $false
+        }
+    }
+    catch {
+        Write-Host "VapourSynth health check failed: the portable python does not run." -ForegroundColor Yellow
+        return $false
+    }
     return $true
 }
 
 function Get-VapourSynth {
-    $vs_dir      = Join-Path (Get-Location).Path "portable_config\VapourSynth"
-    $new_sentinel = Join-Path $vs_dir "Lib\site-packages\vapoursynth\vsscript.dll"
+    $vs_dir       = Join-Path $script:Root "portable_config\VapourSynth"
     $old_sentinel = Join-Path $vs_dir "vapoursynth.dll"
 
     if (Test-VapourSynth-Healthy $vs_dir) {
@@ -1716,65 +1558,64 @@ function Get-VapourSynth {
         return
     }
 
-    if ((Test-Path $old_sentinel) -and -not $Installing) {
+    # A legacy install on a not-yet-migrated tree is upgraded by the 1.2.0
+    # migration. If the registry says that migration already ran, nothing
+    # else would repair it, so do it here.
+    $legacy = Test-Path $old_sentinel
+    if ($legacy -and -not $Installing -and ((Get-InstalledVersion) -lt [version]"1.2.0")) {
         Write-Host "Legacy VapourSynth install detected -- the version migrations will upgrade it." -ForegroundColor Yellow
         return
     }
 
-    if (Test-Path $old_sentinel) {
-        Write-Host "Legacy VapourSynth install found on a fresh install -- replacing with the latest runtime." -ForegroundColor Yellow
-        Reset-VapourSynth-Folder $vs_dir
+    if (Test-Path $vs_dir) {
+        Write-Host "VapourSynth install is old or incomplete -- replacing with the latest runtime." -ForegroundColor Yellow
+        Install-VapourSynth-Runtime $vs_dir -ResetFirst
     }
     else {
         Write-Host "VapourSynth not found -- installing." -ForegroundColor Green
-    }
-
-    Install-VapourSynth-Runtime $vs_dir
-
-    if ($Installing) {
-        Set-VSScriptPath
+        Install-VapourSynth-Runtime $vs_dir
     }
 }
 
-# Latest stable VapourSynth release tag (e.g. "R82"); falls back to R82 if the
-# GitHub API is unreachable. /releases/latest never returns prereleases.
+# Latest stable VapourSynth release tag (e.g. "R82"). /releases/latest never
+# returns prereleases.
 function Get-LatestVapourSynthTag {
-    try {
-        $tag = (Get-LatestGithubRelease "vapoursynth/vapoursynth").tag_name
-        if ($tag -match "^R\d+$") { return $tag }
-    }
-    catch { }
-    Write-Host "Could not query the VapourSynth release API -- falling back to R82." -ForegroundColor Yellow
-    return "R82"
+    $tag = $null
+    try { $tag = (Get-LatestGithubRelease "vapoursynth/vapoursynth").tag_name } catch { }
+    if ($tag -match "^R\d+$") { return $tag }
+
+    Write-Host "Could not query the VapourSynth release API -- falling back to $($script:FallbackVapourSynthTag)." -ForegroundColor Yellow
+    return $script:FallbackVapourSynthTag
 }
 
 # The official R80+ portable recipe (mirrors vapoursynth's own
 # Install-Portable-VapourSynth.ps1): embedded Python, site-packages appended to
 # the ._pth, get-pip, then the wheel -- which IS the runtime now (core, script
-# host, plugins and VSPipe all live inside it). After the wheel:
-#   - open-svpflow is pip-installed so the interpolation plugins auto-load,
-#   - Scripts\*.exe pip shims are removed,
-#   - python -m vapoursynth register-install registers this portable runtime
-#     with Windows (the official VSSCRIPT_PATH mechanism),
-#   - a vapoursynth_runtime.txt marker records the installed release tag.
-# Callers doing a wipe-reinstall keep the user's own files via
-# Reset-VapourSynth-Folder (see $script:UsersVapourSynthArtifacts below).
+# host, plugins and VSPipe all live inside it). open-svpflow is pip-installed
+# so the interpolation plugins auto-load. Everything is built in a temp
+# folder FIRST; with -ResetFirst the old runtime is only wiped once the new
+# one is ready to copy, so a failed download leaves the old install intact.
+# User files (see $script:UsersVapourSynthArtifacts) always survive.
 function Install-VapourSynth-Runtime {
-    param([string]$TargetDir)
+    param(
+        [string]$TargetDir,
+        [switch]$ResetFirst
+    )
 
     $tag = Get-LatestVapourSynthTag
     $ver = $tag.Substring(1)
     Write-Host "Latest VapourSynth: $tag" -ForegroundColor Green
 
-    $py_major = 3; $py_minor = 14; $py_patch = 0
-    for ($i = 1; $i -le 20; $i++) {
+    # Newest embeddable 3.14.x; fall back to 3.13 if none is published.
+    $py_major = 3; $py_minor = 14; $py_patch = -1
+    for ($i = 0; $i -le 20; $i++) {
         $py_uri = "https://www.python.org/ftp/python/$py_major.$py_minor.$i/python-$py_major.$py_minor.$i-embed-amd64.zip"
         try {
             Invoke-WebRequest -Uri $py_uri -Method Head -UseBasicParsing -UserAgent $useragent | Out-Null
             $py_patch = $i
         } catch { break }
     }
-    if ($py_patch -eq 0) {
+    if ($py_patch -lt 0) {
         $py_minor = 13; $py_patch = 10
     }
     Write-Host "Using Python $py_major.$py_minor.$py_patch" -ForegroundColor Green
@@ -1787,21 +1628,21 @@ function Install-VapourSynth-Runtime {
     $vs_tmp      = Join-Path $dl_dir "vs_portable"
 
     try {
+        if (Test-Path $dl_dir) { Remove-Item -Recurse -Force $dl_dir }
         $null = New-Item -ItemType Directory -Force $dl_dir
         $null = New-Item -ItemType Directory -Force $py_tmp
         $null = New-Item -ItemType Directory -Force $vs_tmp
 
         Write-Host "Downloading Python embed..." -ForegroundColor Green
-        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$py_major.$py_minor.$py_patch/python-$py_major.$py_minor.$py_patch-embed-amd64.zip" `
-                          -OutFile $py_zip -UserAgent $useragent
+        Invoke-WebRequestWithRetry -Uri "https://www.python.org/ftp/python/$py_major.$py_minor.$py_patch/python-$py_major.$py_minor.$py_patch-embed-amd64.zip" `
+                                   -OutFile $py_zip
 
         Write-Host "Downloading VapourSynth $tag portable..." -ForegroundColor Green
-        Invoke-WebRequest -Uri "https://github.com/vapoursynth/vapoursynth/releases/download/$tag/VapourSynth64-Portable-R$ver.zip" `
-                          -OutFile $vs_zip -UserAgent $useragent
+        Invoke-WebRequestWithRetry -Uri "https://github.com/vapoursynth/vapoursynth/releases/download/$tag/VapourSynth64-Portable-R$ver.zip" `
+                                   -OutFile $vs_zip
 
         Write-Host "Downloading pip..." -ForegroundColor Green
-        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" `
-                          -OutFile $pip_script -UserAgent $useragent
+        Invoke-WebRequestWithRetry -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $pip_script
 
         Write-Host "Extracting Python..." -ForegroundColor Green
         Expand-Archive -LiteralPath $py_zip -DestinationPath $py_tmp -Force
@@ -1813,46 +1654,62 @@ function Install-VapourSynth-Runtime {
 
         Write-Host "Installing pip..." -ForegroundColor Green
         & "$py_tmp\python.exe" $pip_script "--no-warn-script-location"
+        if ($LASTEXITCODE -ne 0) { throw "get-pip.py failed (exit code $LASTEXITCODE)" }
 
         Write-Host "Extracting VapourSynth portable..." -ForegroundColor Green
         Expand-Archive -LiteralPath $vs_zip -DestinationPath $vs_tmp -Force
 
         $wheel = Get-ChildItem "$vs_tmp\wheel" -Filter "VapourSynth-*.whl" -ErrorAction Ignore |
                  Select-Object -First 1
-        if ($wheel) {
-            Write-Host "Installing VapourSynth wheel..." -ForegroundColor Green
-            & "$py_tmp\python.exe" -m pip install $wheel.FullName "--no-warn-script-location"
-        } else {
+        if (-not $wheel) {
             throw "VapourSynth wheel not found in portable zip."
         }
+        Write-Host "Installing VapourSynth wheel..." -ForegroundColor Green
+        & "$py_tmp\python.exe" -m pip install $wheel.FullName "--no-warn-script-location"
+        if ($LASTEXITCODE -ne 0) { throw "Installing the VapourSynth wheel failed (exit code $LASTEXITCODE)" }
 
         # The interpolation plugins, same environment: the pip package installs
-        # them under Lib\site-packages\vapoursynth\plugins\open-svpflow where
-        # R80+ cores auto-load them. The manual svpflow DLLs (Get-VSDLLs) are
-        # still fetched separately and take precedence when present.
+        # them where R80+ cores auto-load them. The manual svpflow DLLs
+        # (Get-VSDLLs) are fetched separately and take precedence when present.
         Write-Host "Installing open-svpflow (frame interpolation plugins)..." -ForegroundColor Green
         & "$py_tmp\python.exe" -m pip install "open-svpflow" "--no-warn-script-location"
-
-        Write-Host "Registering the portable VapourSynth runtime with Windows..." -ForegroundColor Green
-        & "$py_tmp\python.exe" -m vapoursynth register-install
+        if ($LASTEXITCODE -ne 0) { throw "Installing open-svpflow failed (exit code $LASTEXITCODE)" }
 
         # pip console shims are not needed in the portable tree.
         Get-ChildItem "$py_tmp\Scripts" -Filter "*.exe" -ErrorAction Ignore | Remove-Item -Force -ErrorAction Ignore
 
+        # Everything downloaded and built -- only now touch the live install.
+        $null = New-Item -ItemType Directory -Force $TargetDir
+        if ($ResetFirst) {
+            Reset-VapourSynth-Folder $TargetDir
+        }
+
         Write-Host "Copying files to $TargetDir..." -ForegroundColor Green
 
-        $null = New-Item -ItemType Directory -Force $TargetDir
         Get-ChildItem $py_tmp -File | Copy-Item -Destination $TargetDir -Force
         $lib_src = Join-Path $py_tmp "Lib"
         if (Test-Path $lib_src) {
-            Copy-Item $lib_src $TargetDir -Recurse -Force
+            $lib_dst = Join-Path $TargetDir "Lib"
+            $null = New-Item -ItemType Directory -Force $lib_dst
+            Copy-Item -Path (Join-Path $lib_src "*") -Destination $lib_dst -Recurse -Force
         }
 
         Get-ChildItem $vs_tmp -File | Copy-Item -Destination $TargetDir -Force
 
-        if ($tag) {
-            Set-Content -Path (Join-Path $TargetDir "vapoursynth_runtime.txt") -Value $tag -Encoding ASCII
+        # Register the FINAL location (not the temp folder, which is deleted
+        # below) with Windows -- the official VSSCRIPT_PATH mechanism.
+        Write-Host "Registering the portable VapourSynth runtime with Windows..." -ForegroundColor Green
+        try {
+            & (Join-Path $TargetDir "python.exe") -m vapoursynth register-install
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "register-install exited with code $LASTEXITCODE (VSSCRIPT_PATH is still set explicitly)." -ForegroundColor Yellow
+            }
         }
+        catch {
+            Write-Host "register-install failed: $($_.Exception.Message) (VSSCRIPT_PATH is still set explicitly)." -ForegroundColor Yellow
+        }
+
+        Set-Content -Path (Join-Path $TargetDir "vapoursynth_runtime.txt") -Value $tag -Encoding ASCII
 
         Write-Host "VapourSynth $tag installed OK" -ForegroundColor Green
     }
@@ -1862,22 +1719,9 @@ function Install-VapourSynth-Runtime {
         throw
     }
     finally {
-        if (Test-Path $dl_dir) { Remove-Item -Recurse -Force $dl_dir }
+        if (Test-Path $dl_dir) { Remove-Item -Recurse -Force $dl_dir -ErrorAction SilentlyContinue }
     }
 }
-
-# Files inside portable_config\VapourSynth that must survive any wipe-reinstall.
-# Everything else in the folder is runtime data that the recipe recreates.
-$script:UsersVapourSynthArtifacts = @(
-    "vapoursynth.vpy",
-    "vapoursynth_fps.txt",
-    "vapoursynth_current_path.txt",
-    "vapoursynth_params.json",
-    "svpflow1_vs.dll",
-    "svpflow2_vs.dll",
-    "svpflow_version.txt",
-    "vapoursynth_runtime.txt"
-)
 
 function Reset-VapourSynth-Folder {
     param([string]$VSDir)
@@ -1888,11 +1732,70 @@ function Reset-VapourSynth-Folder {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Adds entries to the persistent PATH of a scope via the registry so the
+# existing value type (REG_EXPAND_SZ, with %VARS% unexpanded) is preserved --
+# [Environment]::SetEnvironmentVariable would flatten it. Entries are
+# compared exactly (not with -like, where [ ] are wildcards and a parent
+# folder matches its subfolders). Returns the entries that were added.
+function Add-ToPersistentPath {
+    param(
+        [string]$Scope,
+        [string[]]$Entries
+    )
+
+    if ($Scope -eq "Machine") {
+        $hive    = [Microsoft.Win32.Registry]::LocalMachine
+        $keyPath = "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+    }
+    else {
+        $hive    = [Microsoft.Win32.Registry]::CurrentUser
+        $keyPath = "Environment"
+    }
+
+    $key = $hive.OpenSubKey($keyPath, $true)
+    if (-not $key) { throw "Cannot open the $Scope environment registry key." }
+
+    try {
+        $kind    = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        $current = ""
+        if ($key.GetValueNames() -contains "Path") {
+            $current = [string]$key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind    = $key.GetValueKind("Path")
+        }
+
+        $existing = @()
+        foreach ($part in ($current -split ';')) {
+            if ($part) { $existing += $part.Trim().TrimEnd('\') }
+        }
+
+        $toAdd = @()
+        foreach ($entry in $Entries) {
+            $norm  = $entry.TrimEnd('\')
+            $found = $false
+            foreach ($e in $existing) {
+                if ($e -ieq $norm) { $found = $true; break }
+            }
+            if (-not $found) { $toAdd += $entry }
+        }
+
+        if ($toAdd.Count -gt 0) {
+            $new = if ($current) { $current.TrimEnd(';') + ";" + ($toAdd -join ';') } else { $toAdd -join ';' }
+            $key.SetValue("Path", $new, $kind)
+
+            # Setting/removing a throwaway user variable makes Windows
+            # broadcast the environment change to running programs.
+            [Environment]::SetEnvironmentVariable("MPVSYNTH_ENV_REFRESH", "1", "User")
+            [Environment]::SetEnvironmentVariable("MPVSYNTH_ENV_REFRESH", $null, "User")
+        }
+        return $toAdd
+    }
+    finally {
+        $key.Close()
+    }
+}
+
 function Set-VSScriptPath {
-    # Resolve ..\portable_config\... relative to the folder this script lives in
-    # (the installer folder), not the current working directory.
-    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
-    $vs_dir    = Join-Path $scriptDir "..\portable_config\VapourSynth"
+    $vs_dir = Join-Path $script:Root "portable_config\VapourSynth"
     # R80+ pip layout: the script host lives inside the vapoursynth package
     # under site-packages. A bare VSScript.dll at the folder root only exists
     # in manually-copied/legacy trees, so it is the fallback, not the target:
@@ -1913,48 +1816,43 @@ function Set-VSScriptPath {
     }
 
     # The pip layout buries python314.dll (the embedded interpreter) in the
-    # runtime root instead of next to mpv.exe. vsscript.dll links no libpython
-    # - it boots the interpreter dynamically - and mpv, when VSSCRIPT_PATH is
-    # empty, falls back to LoadLibrary("VSScript.dll") over the standard
-    # search (mpv dir, System32, PATH). Keeping the runtime root and the
-    # package directory on PATH makes BOTH the dynamic python boot and the
-    # bare-name fallback work from any launcher.
-    $runtime_root = [System.IO.Path]::GetFullPath((Join-Path $vs_dir "."))
+    # runtime root instead of next to mpv.exe. vsscript.dll boots the
+    # interpreter dynamically, and mpv, when VSSCRIPT_PATH is empty, falls
+    # back to LoadLibrary("VSScript.dll") over the standard search path.
+    # Keeping the runtime root and the package directory on PATH makes BOTH
+    # work from any launcher.
+    $runtime_root = [System.IO.Path]::GetFullPath($vs_dir).TrimEnd('\')
     $package_dir  = Join-Path $runtime_root "Lib\site-packages\vapoursynth"
     $scope = if (Test-Admin) { "Machine" } else { "User" }
-    $scope_path = [Environment]::GetEnvironmentVariable("Path", $scope)
-    $needed = @($runtime_root, $package_dir) | Where-Object { $scope_path -notlike "*$_*" }
-    if ($needed.Count -gt 0) {
-        try {
-            $new_path = $scope_path
-            foreach ($entry in $needed) {
-                if (-not $new_path) { $new_path = $entry }
-                else { $new_path = "$new_path;$entry" }
-            }
-            [Environment]::SetEnvironmentVariable("Path", $new_path, $scope)
-            Write-Host "Added to the $scope PATH: $($needed -join '; ')" -ForegroundColor Green
-            foreach ($entry in $needed) {
-                if ($env:Path -notlike "*$entry*") { $env:Path = "$env:Path;$entry" }
-            }
-        }
-        catch {
-            Write-Host "Could not update the $scope PATH: $($_.Exception.Message)" -ForegroundColor Yellow
+
+    try {
+        $added = @(Add-ToPersistentPath -Scope $scope -Entries @($runtime_root, $package_dir))
+        if ($added.Count -gt 0) {
+            Write-Host "Added to the $scope PATH: $($added -join '; ')" -ForegroundColor Green
         }
     }
+    catch {
+        Write-Host "Could not update the $scope PATH: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    foreach ($entry in @($runtime_root, $package_dir)) {
+        $present = $false
+        foreach ($p in ($env:Path -split ';')) {
+            if ($p.TrimEnd('\') -ieq $entry) { $present = $true; break }
+        }
+        if (-not $present) { $env:Path = "$($env:Path);$entry" }
+    }
 
-    # Write BOTH scopes to the SAME value, always. This machine has proved
-    # that mixed-scope pointers deadlock: an elevated run writes Machine,
-    # the user checks User (or vice versa), and whichever scope lost is
-    # invisible to somebody. Identical values in both scopes end the fight,
-    # and a fresh process merges to the same target either way.
-    foreach ($scope in @("Machine", "User")) {
+    # Write BOTH scopes to the SAME value, always: mixed-scope pointers
+    # deadlock (an elevated run writes Machine, the user checks User, or vice
+    # versa). Identical values in both scopes end the fight.
+    foreach ($envScope in @("Machine", "User")) {
         try {
-            [Environment]::SetEnvironmentVariable("VSSCRIPT_PATH", $vsscript, $scope)
-            [Environment]::SetEnvironmentVariable("VSSCRIPT_DLL", $vsscript, $scope)
+            [Environment]::SetEnvironmentVariable("VSSCRIPT_PATH", $vsscript, $envScope)
+            [Environment]::SetEnvironmentVariable("VSSCRIPT_DLL", $vsscript, $envScope)
         }
         catch {
             # Machine scope needs elevation; a non-elevated pass just skips it.
-            Write-Host "Could not set VSSCRIPT vars at $scope scope: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "Could not set VSSCRIPT vars at $envScope scope: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
     $env:VSSCRIPT_PATH = $vsscript
@@ -1963,7 +1861,7 @@ function Set-VSScriptPath {
 }
 
 function Get-VSDLLs {
-    $vs_dir       = Join-Path (Get-Location).Path "portable_config\VapourSynth"
+    $vs_dir       = Join-Path $script:Root "portable_config\VapourSynth"
     $vs1_dst      = Join-Path $vs_dir "svpflow1_vs.dll"
     $vs2_dst      = Join-Path $vs_dir "svpflow2_vs.dll"
     $version_file = Join-Path $vs_dir "svpflow_version.txt"
@@ -2046,11 +1944,16 @@ function Get-VSDLLs {
     }
 }
 
+# ===========================================================================
+# Main
+# ===========================================================================
+
 if (Test-Admin) {
     Write-Host "Running with administrator privileges" -ForegroundColor Yellow
 }
 else {
     Write-Host "Running without administrator privileges" -ForegroundColor Red
+    Write-Host "Warning: the version registry (HKLM) and machine-wide PATH cannot be written; run updater.bat instead." -ForegroundColor Red
 }
 
 try {
@@ -2058,79 +1961,80 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $global:progressPreference = 'silentlyContinue'
 
-	$pc_dir = Join-Path (Get-Location).Path "portable_config"
-	if (Test-Path $pc_dir) {
-		# Probe before granting: an icacls reset with /T costs real time on a
-		# tree holding an entire python embed, and it is only needed when
-		# something is actually locked. A tiny write probe answers it cheaply.
-		$probe = Join-Path $pc_dir ".acl-probe.tmp"
-		$needs_acl = $false
-		try {
-			$null = New-Item -Path $probe -ItemType File -Force -ErrorAction Stop
-			Remove-Item $probe -Force -ErrorAction SilentlyContinue
-		}
-		catch {
-			$needs_acl = $true
-		}
-		if ($needs_acl) {
-			Write-Host "Fixing ACL on: $pc_dir" -ForegroundColor Yellow
-			& icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
-		}
-		else {
-			Write-Host "ACL on portable_config already allows writes - skipping icacls." -ForegroundColor Green
-		}
-	}
+    $pc_dir = Join-Path $script:Root "portable_config"
+    if (Test-Path $pc_dir) {
+        # Probe before granting: an icacls reset with /T costs real time on a
+        # tree holding an entire python embed, and it is only needed when
+        # something is actually locked. A tiny write probe answers it cheaply.
+        $probe = Join-Path $pc_dir ".acl-probe.tmp"
+        $needs_acl = $false
+        try {
+            $null = New-Item -Path $probe -ItemType File -Force -ErrorAction Stop
+            Remove-Item $probe -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            $needs_acl = $true
+        }
+        if ($needs_acl) {
+            Write-Host "Fixing ACL on: $pc_dir" -ForegroundColor Yellow
+            & icacls $pc_dir /grant "${env:USERNAME}:(OI)(CI)F" /T | Out-Null
+        }
+        else {
+            Write-Host "ACL on portable_config already allows writes - skipping icacls." -ForegroundColor Green
+        }
+    }
     Stop-Mpv
-    Upgrade-Mpv
-    Get-VapourSynth
+
+    # --- Support-tool steps --------------------------------------------------
+    # The version migrations are the important part of an update. A failure in
+    # any of these used to abort the run BEFORE the migrations executed, so
+    # each one now fails with a warning and the run continues.
+    try { Upgrade-Mpv }          catch { Write-Host "mpv step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Get-VapourSynth }      catch { Write-Host "VapourSynth step failed: $($_.Exception.Message)" -ForegroundColor Red }
     # Always refresh the env pointers, every pass, install or migration:
     # a once-wrong VSSCRIPT_PATH/VSSCRIPT_DLL otherwise outlives every run.
-    Set-VSScriptPath
-    # Subliminal lives in the portable runtime; run after Get-VapourSynth
-    # so the embedded python it installs into always exists.
-    Install-Subliminal-Portable
+    try { Set-VSScriptPath }     catch { Write-Host "VSSCRIPT_PATH step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Get-VSDLLs }           catch { Write-Host "SVPflow DLL step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Upgrade-Ytplugin }     catch { Write-Host "yt-dlp plugin step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    try { Upgrade-FFmpeg }       catch { Write-Host "ffmpeg step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    # Subliminal lives in the portable runtime; runs after Get-VapourSynth so
+    # the embedded python it installs into exists.
+    try { Update-PythonEnvironment } catch { Write-Host "Python step failed: $($_.Exception.Message)" -ForegroundColor Red }
 
-    # --- Non-critical support-tool steps ------------------------------------
-    # A failure in any of these used to abort the whole run BEFORE the
-    # version migrations could execute (the registry version key was never
-    # even written). The migrations are the important part of an update:
-    # support tools now fail with a warning and the run continues.
-    try { Get-VSDLLs }      catch { Write-Host "SVPflow DLL step failed: $($_.Exception.Message)" -ForegroundColor Red }
-    if ($Installing) {
-        Set-VSScriptPath
+    if ($Installing -and -not $script:ForceMigrationsOnNextRun) {
+        Write-Host ""
+        Write-Host "Fresh install detected -- skipping migration scripts." -ForegroundColor Green
+        try {
+            Set-InstalledVersion $UpdaterVersion
+        }
+        catch {
+            Write-Host "Could not record the installed version in the registry: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
     }
-    try { Upgrade-Ytplugin } catch { Write-Host "yt-dlp plugin step failed: $($_.Exception.Message)" -ForegroundColor Red }
-    try { Upgrade-FFmpeg }   catch { Write-Host "ffmpeg step failed: $($_.Exception.Message)" -ForegroundColor Red }
-    try { Upgrade-Python }   catch { Write-Host "Python step failed: $($_.Exception.Message)" -ForegroundColor Red }
+    else {
+        Invoke-Migrations
+        # A migration (1.2.0) may have just created the runtime.
+        try { Install-Subliminal-Portable -OnlyIfMissing } catch { }
+    }
 
-	if ($Installing -and -not $script:ForceMigrationsOnNextRun) {
-		Write-Host ""
-		Write-Host "Fresh install detected -- skipping migration scripts." -ForegroundColor Green
-		try {
-			Set-InstalledVersion $UpdaterVersion
-		}
-		catch {
-			Write-Host "Could not record the installed version in the registry: $($_.Exception.Message)" -ForegroundColor Yellow
-		}
-	}
-	else {
-		Invoke-Migrations
-	}
+    Clean-Downloaded
 
-	try {
-		Complete-SelfUpdate
-	}
-	catch {
-		Write-Host "Self-update could not finish: $($_.Exception.Message)" -ForegroundColor Yellow
-	}
+    try {
+        Complete-SelfUpdate
+    }
+    catch {
+        Write-Host "Self-update could not finish: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 
-	if ($Unattended) {
-		exit 0
-	}
+    if ($Unattended) {
+        exit 0
+    }
 
     Write-Host "Operation completed" -ForegroundColor Magenta
 }
 catch [System.Exception] {
+    Clean-Downloaded
+
     # Rich diagnostics: a single generic message hid which step killed the
     # run and sent users looking at the wrong thing.
     Write-Host ""
