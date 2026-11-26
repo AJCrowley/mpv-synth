@@ -25,7 +25,7 @@ That's the experience mpv-synth delivers on Windows. Open a video file and it pl
 
 **Frame Interpolation** - Full nth pipeline. Feed it any framerate. Match your display's refresh rate, stick to 60fps, or push 144. The presets in the right-click menu are just numbers in a config file: change them, add more, remove ones you don't need. Set it to activate automatically and limit by resolution, if your GPU handles 1080p fine but struggles at 4K, set a max resolution and it only kicks in below that. Entirely optional → the player works fine without it.
 
-**Automatic Colour Management** - The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time.
+**Automatic Colour Management** - The icc-detect plugin reads the colour space and HDR metadata of every file on load. HDR content passes through natively on capable displays and tone-maps correctly on SDR, automatically, every time. No more purple and green DV video files, this app knows how to handle a colour profile.
 
 **Filmstrip Timeline** - 150 evenly-spaced thumbnail slices by default, have as many or as few as you like to achieve your best look, composited into the seekbar, giving you a visual map of the entire file. Hover for a frame-accurate preview. Jump to any scene with a click.
 
