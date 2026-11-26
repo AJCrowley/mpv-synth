@@ -31,8 +31,6 @@ That's the experience mpv-synth delivers on Windows. Open a video file and it pl
 
 **Auto-advance & Resume** - When a video ends, mpv-synth moves to the next file in the folder automatically → when you quit mid-file, it resumes exactly where you stopped. No manual bookmarking required.
 
-**Smart Subtitle Selection** - The auto-subs plugin activates a subtitle track only when it matches every term in a configurable list → `match=en,forced` picks up English (Forced) automatically, while leaving everything else untouched. Fine-grained, or one-word simple.
-
 **OpenSubtitles Integration** - The opensubs plugin searches and downloads subtitles from OpenSubtitles and other providers directly from the right-click menu. Manual search, best-match download, or browse results, all without leaving the player. Supports login credentials for premium providers.
 
 **Simplified On-Screen Controls** - The osc-simplified plugin replaces mpv's default OSC with a clean, minimal control bar. Configurable skip buttons (left, right, middle click, each with its own seek duration), dark and light modes, and rounded corners. No clutter.
