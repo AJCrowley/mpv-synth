@@ -177,11 +177,6 @@ Due to significant changes, your config files will have to be updated to allow n
 Upgrade complete.
 
 Go into your portable_config folder and update mpv.conf with your language preferences.
-
-Go into script-opts and update:
- - auto-subs.conf: Set match to equal your criteria for auto enabling subs, e.g. "En,Forced", as in the example, will automatically activate subtitles when both "en" and "forced" are found in the subtitle track, which usually means in English shows the non-English speaking parts would be automatically subtitled, but you can set it for whatever language(s) you want to auto active, it will only activate if every string of characters in the comma separated list match the track, or completely disable it.
- 
- ---
  
  - opensubs.conf: Everything is set up here for English. To change change osub(param)1 and 2 to match your primary and secondary language choices (see https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes for comprehensive reference), e.g.:
    osubname1="English"
