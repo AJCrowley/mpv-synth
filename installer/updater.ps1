@@ -1334,11 +1334,6 @@ function Upgrade-Mpv {
 }
 
 function Upgrade-Ytplugin {
-    if (Check-Ytplugin-In-System) {
-        Write-Host "yt-dlp or youtube-dl already exists in system PATH, skipping update." -ForegroundColor Green
-        return
-    }
-
     $yt = Check-Ytplugin
     if ($yt) {
         if ((Get-Item $yt).BaseName -like "yt-dlp*") {
